@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, message } from "./api";
 import type { Judgment, Reminder as ReminderItem } from "./types";
 import { classLabel, verdictLabel } from "./types";
-import { ErrorText } from "./widgets";
+import { AiBusy, AiThinking, ErrorText } from "./widgets";
 
 export function Reminder() {
   const [reminder, setReminder] = useState<ReminderItem | null>(null);
@@ -13,6 +13,7 @@ export function Reminder() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [judging, setJudging] = useState(false);
+  const [judgingBusy, setJudgingBusy] = useState(false);
 
   useEffect(() => {
     void api.activeReminder().then(setReminder).catch((reason) => setError(message(reason)));
@@ -22,6 +23,7 @@ export function Reminder() {
       setText("");
       setJudgment(null);
       setJudging(false);
+      setJudgingBusy(false);
       setBusy(false);
       setError("");
     }).then((fn) => {
@@ -31,11 +33,16 @@ export function Reminder() {
   }, []);
 
   async function preview() {
+    if (judgingBusy) return;
+    setJudgingBusy(true);
+    setJudgment(null);
     try {
       setJudgment(await api.previewJudgment(text));
       setError("");
     } catch (reason) {
       setError(message(reason));
+    } finally {
+      setJudgingBusy(false);
     }
   }
 
@@ -81,12 +88,16 @@ export function Reminder() {
             <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="写一句即可" />
           </label>
           <div className="actions" style={{ justifyContent: "flex-start" }}>
-            <button type="button" onClick={() => void preview()}>给出判断</button>
+            <button type="button" disabled={judgingBusy || !text.trim()} onClick={() => void preview()}>
+              {judgingBusy ? "判断中…" : "给出判断"}
+            </button>
           </div>
+          {judgingBusy && <AiBusy label="正在判断要不要换" />}
           {judgment && (
             <div className="verdict">
               <strong className={judgment.verdict === "switch" ? "must" : undefined}>{verdictLabel[judgment.verdict]}</strong>
               <p>{judgment.reason}</p>
+              <AiThinking text={judgment.thinking} />
               <p className="note">
                 {judgment.matchedTitle ? `对上了：${judgment.matchedTitle}` : "没有对上已有任务，这句话只记日志。"}
               </p>

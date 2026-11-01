@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, message } from "./api";
-import { ErrorText } from "./widgets";
+import { AiBusy, ErrorText } from "./widgets";
 
 export function Settings({ revision }: { revision: number }) {
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
@@ -11,6 +11,7 @@ export function Settings({ revision }: { revision: number }) {
   const [dataPath, setDataPath] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     void api.settings().then((settings) => {
@@ -22,10 +23,29 @@ export function Settings({ revision }: { revision: number }) {
     }).catch((reason) => setError(message(reason)));
   }, [revision]);
 
+  async function testConnection() {
+    if (testing) return;
+    setTesting(true);
+    setNote("");
+    setError("");
+    try {
+      const result = await api.testAiConnection(
+        baseUrl.trim() || null,
+        model.trim() || null,
+        apiKey.trim() || null,
+      );
+      setNote(result);
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setTesting(false);
+    }
+  }
+
   return (
     <section>
       <h1>设置</h1>
-      <p className="lead">模型只在整理收集箱、今日三件和对上「我正在做的事」时调用。切换结论仍由规则给出。钥匙放在系统凭据里。</p>
+      <p className="lead">模型只在 AI 辅助整理临时任务、今日三件和对上「我正在做的事」时调用。切换结论仍由规则给出。钥匙放在系统凭据里。</p>
       <ErrorText text={error} />
       <div className="stack">
         <label className="field">接口地址<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
@@ -57,6 +77,13 @@ export function Settings({ revision }: { revision: number }) {
             setNote(settings.hasApiKey ? "已保存。" : "已保存。这次没有填写钥匙。");
             setError("");
           }).catch((reason) => setError(message(reason)))}>保存</button>
+          <button
+            type="button"
+            disabled={testing || (!hasKey && !apiKey.trim())}
+            onClick={() => void testConnection()}
+          >
+            {testing ? "正在检测…" : "检测连接"}
+          </button>
           {hasKey && <button className="quiet" onClick={() => void api.saveSettings({
             baseUrl, model, apiKey: null, clearApiKey: true, autostart,
           }).then((settings) => {
@@ -67,7 +94,8 @@ export function Settings({ revision }: { revision: number }) {
             setNote(reminder ? `已弹出：${reminder.title}` : "现在没有到点的提醒。");
           }).catch((reason) => setError(message(reason)))}>立即检查提醒</button>
         </div>
-        {note && <p className="note">{note}</p>}
+        {testing && <AiBusy label="正在检测模型连接" />}
+        {note && <p className="note" style={{ whiteSpace: "pre-wrap" }}>{note}</p>}
         <p className="note">数据文件：{dataPath}</p>
         <p className="note">关掉主窗口后程序仍在托盘里。右下角图标可以重新打开，或退出。</p>
       </div>

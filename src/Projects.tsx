@@ -1,14 +1,14 @@
 ﻿import { useEffect, useState, type FormEvent } from "react";
 import { api, message } from "./api";
 import type { Limits, Project, Subproject, WorkLog } from "./types";
-import { projectStatus, subStatus } from "./types";
+import { parseQuadrant, projectStatus, QUADRANT_OPTIONS, subStatus } from "./types";
 import { DateTimeField, DayChecks, Dialog, Empty, ErrorText, Field, when } from "./widgets";
 
 const emptyProjectForm = { name: "", outcome: "", status: "active" };
 const emptySubForm = {
   kind: "regular",
   name: "",
-  important: "yes",
+  quadrant: "iu",
   progress: "doing",
   dueAt: "",
   repeatDays: "1,2,3,4,5",
@@ -48,7 +48,8 @@ function subMeta(sub: Subproject) {
   }
   const progress = progressLabel[sub.progress] ?? subStatus[sub.status];
   const percent = sub.progress === "doing" && sub.progressPercent != null ? ` ${sub.progressPercent}%` : "";
-  return `${progress}${percent} · ${sub.important ? "重要" : "不重要"}${sub.dueAt ? ` · ${when(sub.dueAt)}` : ""}`;
+  const quadrant = sub.quadrant ?? (sub.important == null ? "" : sub.important ? "重要" : "不重要");
+  return `${progress}${percent}${quadrant ? ` · ${quadrant}` : ""}${sub.dueAt ? ` · 截止 ${when(sub.dueAt)}` : ""}`;
 }
 
 export function ProjectOverlays({
@@ -351,6 +352,23 @@ export function Projects({
           <ErrorText text={error} />
           {notice && <p className="note">{notice}</p>}
           {opened.kind !== "periodic" && (
+            <div className="stack detail-form">
+              <h2>截止时间</h2>
+              <DateTimeField
+                label="截止时间，可空"
+                value={opened.dueAt ?? ""}
+                emptyText="未设置，点这里选择"
+                onChange={(dueAt) => {
+                  const target = opened;
+                  void run(async () => {
+                    await api.setSubprojectDue(target.id, dueAt || null);
+                    setNotice(dueAt ? `已更新「${target.name}」的截止时间` : `已清除「${target.name}」的截止时间`);
+                  });
+                }}
+              />
+            </div>
+          )}
+          {opened.kind !== "periodic" && (
             <form className="stack detail-form" onSubmit={(event) => {
               event.preventDefault();
               const target = opened;
@@ -441,11 +459,13 @@ export function Projects({
                 if (!/^\d+$/.test(raw) || Number(raw) > 100) throw new Error("进行中的进度要在 0 到 100 之间");
                 progressPercent = Number(raw);
               }
+              const quadrant = parseQuadrant(subForm.quadrant);
               await api.createSubproject({
                 projectId: current.id,
                 kind: subForm.kind,
                 name: subForm.name,
-                important: subForm.important === "yes",
+                important: quadrant?.important ?? true,
+                urgent: quadrant?.urgent ?? false,
                 progress: subForm.kind === "regular" ? subForm.progress : "",
                 dueAt: subForm.kind === "regular" ? subForm.dueAt || null : null,
                 repeatDays: subForm.kind === "periodic" ? subForm.repeatDays : null,
@@ -468,10 +488,11 @@ export function Projects({
             {subForm.kind === "regular" ? (
               <>
                 <Field label="名称"><input autoFocus value={subForm.name} onChange={(event) => setSubForm({ ...subForm, name: event.target.value })} /></Field>
-                <Field label="重要程度">
-                  <select value={subForm.important} onChange={(event) => setSubForm({ ...subForm, important: event.target.value })}>
-                    <option value="yes">重要</option>
-                    <option value="no">不重要</option>
+                <Field label="四象限">
+                  <select value={subForm.quadrant} onChange={(event) => setSubForm({ ...subForm, quadrant: event.target.value })}>
+                    {QUADRANT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </Field>
                 <Field label="进度">
@@ -498,7 +519,7 @@ export function Projects({
                     </span>
                   </Field>
                 )}
-                <DateTimeField label="截至时间" value={subForm.dueAt} emptyText="未设置，点这里选择" onChange={(dueAt) => setSubForm({ ...subForm, dueAt })} />
+                <DateTimeField label="截止时间，可空" value={subForm.dueAt} emptyText="未设置，点这里选择" onChange={(dueAt) => setSubForm({ ...subForm, dueAt })} />
               </>
             ) : (
               <>

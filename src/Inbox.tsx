@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, message } from "./api";
 import type { Item, ItemDraft, Project, Subproject } from "./types";
-import { DateTimeField, Empty, ErrorText, Field } from "./widgets";
+import { parseQuadrant, quadrantValue, QUADRANT_OPTIONS } from "./types";
+import { AiBusy, AiThinking, DateTimeField, Empty, ErrorText, Field } from "./widgets";
 
 const emptyDraft = (title = ""): ItemDraft => ({
   kind: "task",
@@ -10,6 +11,7 @@ const emptyDraft = (title = ""): ItemDraft => ({
   projectId: null,
   subprojectId: null,
   important: null,
+  urgent: null,
   dueAt: null,
   estimateMin: null,
   repeatDays: null,
@@ -31,6 +33,8 @@ export function Inbox({ revision }: { revision: number }) {
   const [subs, setSubs] = useState<Subproject[]>([]);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [note, setNote] = useState("");
+  const [thinking, setThinking] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
   async function load() {
@@ -48,7 +52,22 @@ export function Inbox({ revision }: { revision: number }) {
     void load().catch((reason) => setError(message(reason)));
   }, [revision]);
 
+  function organizeManually(item: Item) {
+    setThinking(null);
+    setError("");
+    setDraft({
+      ...emptyDraft(item.title),
+      id: item.id,
+      notes: item.notes,
+    });
+    setNote("手填这条临时任务。");
+  }
+
   async function clarify(id: number) {
+    if (busyId != null) return;
+    setBusyId(id);
+    setThinking(null);
+    setError("");
     try {
       const result = await api.clarify(id);
       const kind = asInboxKind(result.draft.kind);
@@ -62,9 +81,12 @@ export function Inbox({ revision }: { revision: number }) {
         followUpAt: kind === "waiting" ? result.draft.followUpAt : null,
       });
       setNote(result.note);
+      setThinking(result.thinking ?? null);
       setError("");
     } catch (reason) {
       setError(message(reason));
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -78,6 +100,7 @@ export function Inbox({ revision }: { revision: number }) {
       subprojectId: next === "waiting" ? draft.subprojectId : null,
       estimateMin: null,
       important: next === "task" ? draft.important : null,
+      urgent: next === "task" ? draft.urgent : null,
       dueAt: next === "task" ? draft.dueAt : null,
       waitingOn: next === "waiting" ? draft.waitingOn : null,
       followUpAt: next === "waiting" ? draft.followUpAt : null,
@@ -97,6 +120,7 @@ export function Inbox({ revision }: { revision: number }) {
       });
       setDraft(null);
       setNote("");
+      setThinking(null);
       window.dispatchEvent(new Event("desk-changed"));
       await load();
       setError("");
@@ -109,24 +133,29 @@ export function Inbox({ revision }: { revision: number }) {
 
   return (
     <section>
-      <h1>收集箱</h1>
-      <p className="lead">先收一句话。整理的时候再决定它是项目任务，还是等待跟进。</p>
+      <h1>临时任务</h1>
+      <p className="lead">先收一句话。整理时再决定它是项目任务，还是等待跟进。</p>
       <ErrorText text={error} />
-      {items.length === 0 && <Empty text="收集箱是空的。" />}
+      {items.length === 0 && <Empty text="还没有临时任务。" />}
       <div className="list">
         {items.map((item) => (
           <article className="row" key={item.id}>
             <h3>{item.title}</h3>
             <div className="actions">
-              <button onClick={() => void clarify(item.id)}>整理</button>
-              <button className="quiet" onClick={() => void api.dropItem(item.id).then(load).catch((reason) => setError(message(reason)))}>丢掉</button>
+              <button disabled={busyId != null} onClick={() => organizeManually(item)}>手动整理</button>
+              <button disabled={busyId != null} onClick={() => void clarify(item.id)}>
+                {busyId === item.id ? "整理中…" : "AI辅助整理"}
+              </button>
+              <button className="quiet" disabled={busyId != null} onClick={() => void api.dropItem(item.id).then(load).catch((reason) => setError(message(reason)))}>丢掉</button>
             </div>
           </article>
         ))}
       </div>
+      {busyId != null && <AiBusy label="正在辅助整理这条临时任务" />}
       {draft && (
         <div className="panel stack">
           <p className="note">{note}</p>
+          <AiThinking text={thinking} />
           <Field label="标题"><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></Field>
           <Field label="类型">
             <select value={kind} onChange={(event) => setKind(event.target.value)}>
@@ -165,17 +194,25 @@ export function Inbox({ revision }: { revision: number }) {
           )}
           {kind === "task" && (
             <>
-              <Field label="重不重要">
+              <Field label="四象限">
                 <select
-                  value={draft.important === null ? "" : draft.important ? "yes" : "no"}
-                  onChange={(event) => setDraft({ ...draft, important: event.target.value === "yes" })}
+                  value={quadrantValue(draft.important, draft.urgent)}
+                  onChange={(event) => {
+                    const next = parseQuadrant(event.target.value);
+                    setDraft({
+                      ...draft,
+                      important: next?.important ?? null,
+                      urgent: next?.urgent ?? null,
+                    });
+                  }}
                 >
-                  <option value="" disabled>选择</option>
-                  <option value="yes">重要</option>
-                  <option value="no">不重要</option>
+                  <option value="" disabled>选择四象限</option>
+                  {QUADRANT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </Field>
-              <DateTimeField label="截止，可空" value={draft.dueAt ?? ""} emptyText="未设置，点这里选择" onChange={(dueAt) => setDraft({ ...draft, dueAt: dueAt || null })} />
+              <DateTimeField label="截止时间，可空" value={draft.dueAt ?? ""} emptyText="未设置，点这里选择" onChange={(dueAt) => setDraft({ ...draft, dueAt: dueAt || null })} />
             </>
           )}
           {kind === "waiting" && (
@@ -187,11 +224,11 @@ export function Inbox({ revision }: { revision: number }) {
           <Field label="备注"><textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></Field>
           <div className="actions" style={{ justifyContent: "flex-start" }}>
             <button className="primary" onClick={() => void save()}>保存</button>
-            <button className="quiet" onClick={() => setDraft(null)}>取消</button>
+            <button className="quiet" onClick={() => { setDraft(null); setThinking(null); }}>取消</button>
           </div>
         </div>
       )}
-      <button className="quiet" onClick={() => { setDraft(emptyDraft()); setNote("手填一条，不经过收集箱。"); }}>直接新建</button>
+      <button className="quiet" onClick={() => { setDraft(emptyDraft()); setNote("手填一条，不经过临时任务。"); setThinking(null); }}>直接新建</button>
     </section>
   );
 }

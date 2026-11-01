@@ -20,10 +20,12 @@ export type Subproject = {
   kind: string;
   progress: string;
   important: boolean | null;
+  urgent: boolean | null;
   dueAt: string | null;
   repeatDays: string | null;
   remindAt: string | null;
   progressPercent: number | null;
+  quadrant: string | null;
 };
 
 export type WorkLog = {
@@ -45,6 +47,7 @@ export type Item = {
   projectName: string | null;
   subprojectName: string | null;
   important: boolean | null;
+  urgent: boolean | null;
   dueAt: string | null;
   estimateMin: number | null;
   status: string;
@@ -68,6 +71,7 @@ export type ItemDraft = {
   projectId: number | null;
   subprojectId: number | null;
   important: boolean | null;
+  urgent: boolean | null;
   dueAt: string | null;
   estimateMin: number | null;
   repeatDays: string | null;
@@ -78,6 +82,22 @@ export type ItemDraft = {
   waitingOn: string | null;
   followUpAt: string | null;
 };
+
+export const QUADRANT_OPTIONS = [
+  { value: "iu", label: "重要且紧急", important: true, urgent: true },
+  { value: "in", label: "重要不紧急", important: true, urgent: false },
+  { value: "nu", label: "不重要但紧急", important: false, urgent: true },
+  { value: "nn", label: "不重要不紧急", important: false, urgent: false },
+] as const;
+
+export function quadrantValue(important: boolean | null | undefined, urgent: boolean | null | undefined) {
+  if (important == null || urgent == null) return "";
+  return QUADRANT_OPTIONS.find((item) => item.important === important && item.urgent === urgent)?.value ?? "";
+}
+
+export function parseQuadrant(value: string) {
+  return QUADRANT_OPTIONS.find((item) => item.value === value) ?? null;
+}
 
 export type DailyView = { item: Item; state: string };
 export type Suggested = { item: Item; reason: string };
@@ -121,13 +141,20 @@ export type Judgment = {
   reason: string;
   snoozeMin: number;
   matchSource: string;
+  thinking?: string | null;
 };
 
-export type ClarifyResult = { source: string; note: string; draft: ItemDraft };
+export type ClarifyResult = {
+  source: string;
+  note: string;
+  draft: ItemDraft;
+  thinking?: string | null;
+};
 export type MorningResult = {
   source: string;
   note: string;
   picks: { id: number; title: string; reason: string }[];
+  thinking?: string | null;
 };
 export type SettingsView = {
   baseUrl: string;

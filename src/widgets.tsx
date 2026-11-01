@@ -201,3 +201,34 @@ export function toLocalInput(iso: string | null) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+const busySteps = ["正在连接模型…", "AI 思考中…", "正在整理结果…"];
+
+export function AiBusy({ label = "AI 思考中" }: { label?: string }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setStep((current) => (current + 1) % busySteps.length);
+    }, 1600);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <div className="ai-busy" role="status" aria-live="polite">
+      <span className="ai-busy-dot" aria-hidden="true" />
+      <div>
+        <strong>{label}</strong>
+        <p className="note">{busySteps[step]}</p>
+      </div>
+    </div>
+  );
+}
+
+export function AiThinking({ text }: { text?: string | null }) {
+  if (!text?.trim()) return null;
+  return (
+    <details className="ai-thinking" open>
+      <summary>思考过程</summary>
+      <pre>{text.trim()}</pre>
+    </details>
+  );
+}

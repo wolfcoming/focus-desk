@@ -33,6 +33,7 @@ export const api = {
     kind: string;
     name: string;
     important: boolean;
+    urgent: boolean;
     progress: string;
     dueAt: string | null;
     repeatDays: string | null;
@@ -42,6 +43,8 @@ export const api = {
   }) => invoke<Subproject>("create_subproject", { input }),
   setSubprojectProgress: (id: number, progress: string, progressPercent: number | null, log: string | null) =>
     invoke<Subproject>("set_subproject_progress", { id, progress, progressPercent, log }),
+  setSubprojectDue: (id: number, dueAt: string | null) =>
+    invoke<Subproject>("set_subproject_due", { id, dueAt }),
   listWorkLogs: (projectId: number | null) => invoke<WorkLog[]>("list_work_logs", { projectId }),
   setSubprojectStatus: (id: number, status: string, pauseSubprojectId: number | null) =>
     invoke<Subproject>("set_subproject_status", { id, status, pauseSubprojectId }),
@@ -72,7 +75,11 @@ export const api = {
   acknowledgeReminder: () => invoke<void>("acknowledge_reminder"),
   resolveStall: (action: string) => invoke<void>("resolve_stall", { action }),
   checkReminders: () => invoke<Reminder | null>("check_reminders"),
+  testAiConnection: (baseUrl: string | null, model: string | null, apiKey: string | null) =>
+    invoke<string>("test_ai_connection", { baseUrl, model, apiKey }),
   clarify: (id: number) => invoke<ClarifyResult>("ai_clarify", { id }),
   morning: () => invoke<MorningResult>("ai_morning"),
   weeklyAssist: () => invoke<{ source: string; summary: string }>("ai_weekly"),
+  followUpLines: (id: number, extra: string | null) =>
+    invoke<{ scripts: string[]; thinking: string | null }>("ai_follow_up_lines", { id, extra }),
 };

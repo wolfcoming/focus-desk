@@ -129,6 +129,7 @@ pub fn run() {
             commands::list_subprojects,
             commands::create_subproject,
             commands::set_subproject_progress,
+            commands::set_subproject_due,
             commands::list_work_logs,
             commands::set_subproject_status,
             commands::delete_project,
@@ -152,9 +153,11 @@ pub fn run() {
             commands::acknowledge_reminder,
             commands::resolve_stall,
             commands::check_reminders,
+            commands::test_ai_connection,
             commands::ai_clarify,
             commands::ai_morning,
-            commands::ai_weekly
+            commands::ai_weekly,
+            commands::ai_follow_up_lines
         ])
         .run(tauri::generate_context!())
         .expect("error while running Focus Desk");

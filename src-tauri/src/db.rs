@@ -36,10 +36,12 @@ pub struct Subproject {
     pub kind: String,
     pub progress: String,
     pub important: Option<bool>,
+    pub urgent: Option<bool>,
     pub due_at: Option<String>,
     pub repeat_days: Option<String>,
     pub remind_at: Option<String>,
     pub progress_percent: Option<i64>,
+    pub quadrant: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,6 +67,7 @@ pub struct Item {
     pub project_name: Option<String>,
     pub subproject_name: Option<String>,
     pub important: Option<bool>,
+    pub urgent: Option<bool>,
     pub due_at: Option<String>,
     pub estimate_min: Option<i64>,
     pub status: String,
@@ -153,6 +156,7 @@ pub struct ItemDraft {
     pub project_id: Option<i64>,
     pub subproject_id: Option<i64>,
     pub important: Option<bool>,
+    pub urgent: Option<bool>,
     pub due_at: Option<String>,
     pub estimate_min: Option<i64>,
     pub repeat_days: Option<String>,
@@ -180,6 +184,7 @@ pub struct NewSubproject {
     pub kind: String,
     pub name: String,
     pub important: bool,
+    pub urgent: bool,
     pub progress: String,
     pub due_at: Option<String>,
     pub repeat_days: Option<String>,
@@ -283,7 +288,7 @@ CREATE TABLE IF NOT EXISTS reminder_state (
 
 const ITEM_SELECT: &str = "
 SELECT i.id, i.kind, i.title, i.notes, i.project_id, i.subproject_id,
-       i.important, i.due_at, i.estimate_min, i.status,
+       i.important, i.urgent, i.due_at, i.estimate_min, i.status,
        i.repeat_days, i.window_start, i.window_end, i.grace_min, i.interrupt_after_grace,
        i.waiting_on, i.follow_up_at, i.started_at, i.snooze_until,
        i.created_at, i.updated_at, i.completed_at,
@@ -311,6 +316,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     ensure_column(conn, "subprojects", "kind", "TEXT NOT NULL DEFAULT 'regular'")?;
     ensure_column(conn, "subprojects", "progress", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "subprojects", "progress_percent", "INTEGER")?;
+    ensure_column(conn, "items", "urgent", "INTEGER NOT NULL DEFAULT 0")?;
     Ok(())
 }
 
@@ -337,7 +343,11 @@ SELECT s.id, s.project_id, p.name, s.name, s.done_criteria, s.target_date, s.sta
        COALESCE(s.kind, 'regular'),
        COALESCE(s.progress, ''),
        (SELECT i.important FROM items i WHERE i.subproject_id = s.id AND i.kind = 'task' ORDER BY i.id LIMIT 1),
-       (SELECT i.due_at FROM items i WHERE i.subproject_id = s.id AND i.kind = 'task' ORDER BY i.id LIMIT 1),
+       (SELECT i.urgent FROM items i WHERE i.subproject_id = s.id AND i.kind = 'task' ORDER BY i.id LIMIT 1),
+       COALESCE(
+         (SELECT i.due_at FROM items i WHERE i.subproject_id = s.id AND i.kind = 'task' ORDER BY i.id LIMIT 1),
+         s.target_date
+       ),
        (SELECT i.repeat_days FROM items i WHERE i.subproject_id = s.id AND i.kind = 'daily' ORDER BY i.id LIMIT 1),
        (SELECT i.window_start FROM items i WHERE i.subproject_id = s.id AND i.kind = 'daily' ORDER BY i.id LIMIT 1),
        s.progress_percent
@@ -465,10 +475,15 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
         )
         .map_err(|err| err.to_string())?;
     }
+    let due = if kind == "regular" {
+        normalize_optional(input.due_at.as_deref())?
+    } else {
+        None
+    };
     tx.execute(
         "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent)
-         VALUES (?1, ?2, '', NULL, ?3, ?4, ?4, ?4, ?5, ?6, ?7)",
-        params![input.project_id, name, status, stamp, kind, progress, progress_percent],
+         VALUES (?1, ?2, '', ?3, ?4, ?5, ?5, ?5, ?6, ?7, ?8)",
+        params![input.project_id, name, due, status, stamp, kind, progress, progress_percent],
     )
     .map_err(|err| err.to_string())?;
     let sub_id = tx.last_insert_rowid();
@@ -491,13 +506,22 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
         )
         .map_err(|err| err.to_string())?;
     } else {
-        let due = normalize_optional(input.due_at.as_deref())?;
         let item_status = if progress == "done" { "done" } else { "open" };
         let completed = if progress == "done" { Some(stamp.as_str()) } else { None };
         tx.execute(
-            "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, due_at, estimate_min, status, interrupt_after_grace, created_at, updated_at, completed_at)
-             VALUES ('task', ?1, '', ?2, ?3, ?4, ?5, 25, ?6, 0, ?7, ?7, ?8)",
-            params![name, input.project_id, sub_id, bool_int(input.important), due, item_status, stamp, completed],
+            "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, estimate_min, status, interrupt_after_grace, created_at, updated_at, completed_at)
+             VALUES ('task', ?1, '', ?2, ?3, ?4, ?5, ?6, 25, ?7, 0, ?8, ?8, ?9)",
+            params![
+                name,
+                input.project_id,
+                sub_id,
+                bool_int(input.important),
+                bool_int(input.urgent),
+                due,
+                item_status,
+                stamp,
+                completed
+            ],
         )
         .map_err(|err| err.to_string())?;
     }
@@ -571,6 +595,39 @@ pub fn set_subproject_status(
     if changed != 1 {
         return Err("找不到这个子任务".into());
     }
+    tx.commit().map_err(|err| err.to_string())?;
+    get_subproject(conn, id)
+}
+
+pub fn set_subproject_due(conn: &Connection, id: i64, due_at: Option<&str>) -> Result<Subproject, String> {
+    let due = normalize_optional(due_at)?;
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let kind: String = tx
+        .query_row(
+            "SELECT COALESCE(kind, 'regular') FROM subprojects WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    if kind == "periodic" {
+        return Err("周期性任务没有截止时间".into());
+    }
+    let stamp = timeutil::now_iso();
+    let changed = tx
+        .execute(
+            "UPDATE subprojects SET target_date = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, due, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个子任务".into());
+    }
+    tx.execute(
+        "UPDATE items SET due_at = ?2, updated_at = ?3
+         WHERE subproject_id = ?1 AND kind = 'task'",
+        params![id, due, stamp],
+    )
+    .map_err(|err| err.to_string())?;
     tx.commit().map_err(|err| err.to_string())?;
     get_subproject(conn, id)
 }
@@ -800,8 +857,8 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
         }
         tx.execute(
             "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent)
-             VALUES (?1, ?2, '', NULL, 'active', ?3, ?3, ?3, 'regular', 'doing', NULL)",
-            params![project_id, prepared.title, stamp],
+             VALUES (?1, ?2, '', ?3, 'active', ?4, ?4, ?4, 'regular', 'doing', NULL)",
+            params![project_id, prepared.title, prepared.due_at, stamp],
         )
         .map_err(|err| err.to_string())?;
         prepared.subproject_id = Some(tx.last_insert_rowid());
@@ -809,18 +866,23 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
     if prepared.kind == "task" {
         if let Some(sub_id) = prepared.subproject_id {
             activate_subproject(&tx, sub_id)?;
+            tx.execute(
+                "UPDATE subprojects SET target_date = ?2, updated_at = ?3 WHERE id = ?1",
+                params![sub_id, prepared.due_at, stamp],
+            )
+            .map_err(|err| err.to_string())?;
         }
     }
     let id = if let Some(id) = draft.id {
         let changed = tx
             .execute(
-                "UPDATE items SET kind=?2, title=?3, notes=?4, project_id=?5, subproject_id=?6, important=?7,
-                 due_at=?8, estimate_min=?9, status=?10, repeat_days=?11, window_start=?12, window_end=?13,
-                 grace_min=?14, interrupt_after_grace=?15, waiting_on=?16, follow_up_at=?17, updated_at=?18, snooze_until=NULL
+                "UPDATE items SET kind=?2, title=?3, notes=?4, project_id=?5, subproject_id=?6, important=?7, urgent=?8,
+                 due_at=?9, estimate_min=?10, status=?11, repeat_days=?12, window_start=?13, window_end=?14,
+                 grace_min=?15, interrupt_after_grace=?16, waiting_on=?17, follow_up_at=?18, updated_at=?19, snooze_until=NULL
                  WHERE id=?1",
                 params![
                     id, prepared.kind, prepared.title, prepared.notes, prepared.project_id, prepared.subproject_id,
-                    prepared.important, prepared.due_at, prepared.estimate_min, prepared.status, prepared.repeat_days,
+                    prepared.important, prepared.urgent.unwrap_or(0), prepared.due_at, prepared.estimate_min, prepared.status, prepared.repeat_days,
                     prepared.window_start, prepared.window_end, prepared.grace_min, prepared.interrupt, prepared.waiting_on,
                     prepared.follow_up_at, stamp
                 ],
@@ -832,12 +894,12 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
         id
     } else {
         tx.execute(
-            "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, due_at, estimate_min, status,
+            "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, estimate_min, status,
              repeat_days, window_start, window_end, grace_min, interrupt_after_grace, waiting_on, follow_up_at, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?17)",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18)",
             params![
                 prepared.kind, prepared.title, prepared.notes, prepared.project_id, prepared.subproject_id,
-                prepared.important, prepared.due_at, prepared.estimate_min, prepared.status, prepared.repeat_days,
+                prepared.important, prepared.urgent.unwrap_or(0), prepared.due_at, prepared.estimate_min, prepared.status, prepared.repeat_days,
                 prepared.window_start, prepared.window_end, prepared.grace_min, prepared.interrupt, prepared.waiting_on,
                 prepared.follow_up_at, stamp
             ],
@@ -995,13 +1057,8 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
         .into_iter()
         .filter(|item| {
             item.important == Some(false)
+                && item.urgent == Some(true)
                 && matches!(item.status.as_str(), "open" | "doing")
-                && item
-                    .due_at
-                    .as_deref()
-                    .and_then(parse_stored)
-                    .map(|due| due.date_naive() <= moment.date_naive())
-                    .unwrap_or(false)
         })
         .collect();
 
@@ -1497,7 +1554,8 @@ pub fn current_work(conn: &Connection, item: &Item) -> Result<CurrentWork, Strin
         .is_some();
     let must_now = item.kind == "task"
         && item.important == Some(true)
-        && due_at.map(|due| due <= moment + Duration::minutes(30)).unwrap_or(false);
+        && (item.urgent == Some(true)
+            || due_at.map(|due| due <= moment + Duration::minutes(30)).unwrap_or(false));
     Ok(CurrentWork {
         important: item.kind == "task" && item.important == Some(true),
         must_now,
@@ -1655,6 +1713,7 @@ struct PreparedDraft {
     project_id: Option<i64>,
     subproject_id: Option<i64>,
     important: Option<i64>,
+    urgent: Option<i64>,
     due_at: Option<String>,
     estimate_min: Option<i64>,
     status: String,
@@ -1673,7 +1732,8 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
         "task" => {
             let project_id = draft.project_id.ok_or("项目任务要挂在大项目上")?;
             let _ = get_project(conn, project_id)?;
-            let important = draft.important.ok_or("选一下这件重不重要")?;
+            let important = draft.important.ok_or("选一下四象限")?;
+            let urgent = draft.urgent.ok_or("选一下四象限")?;
             let estimate = draft.estimate_min.unwrap_or(25);
             check_estimate(estimate)?;
             Ok(PreparedDraft {
@@ -1683,6 +1743,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 project_id: Some(project_id),
                 subproject_id: draft.subproject_id,
                 important: Some(bool_int(important)),
+                urgent: Some(bool_int(urgent)),
                 due_at: normalize_optional(draft.due_at.as_deref())?,
                 estimate_min: Some(estimate),
                 status: "open".into(),
@@ -1716,6 +1777,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 project_id: None,
                 subproject_id: None,
                 important: None,
+                urgent: None,
                 due_at: None,
                 estimate_min: None,
                 status: "open".into(),
@@ -1743,6 +1805,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 project_id: Some(sub.project_id),
                 subproject_id: Some(sub_id),
                 important: None,
+                urgent: None,
                 due_at: None,
                 estimate_min: None,
                 status: "open".into(),
@@ -1762,6 +1825,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
             project_id: draft.project_id,
             subproject_id: draft.subproject_id,
             important: None,
+            urgent: None,
             due_at: None,
             estimate_min: None,
             status: "open".into(),
@@ -1844,6 +1908,15 @@ fn map_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
 
 fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
     let important_int: Option<i64> = row.get(11)?;
+    let urgent_int: Option<i64> = row.get(12)?;
+    let important = important_int.map(|value| value != 0);
+    let urgent = urgent_int.map(|value| value != 0);
+    let kind: String = row.get(9)?;
+    let quadrant = if kind == "regular" {
+        quadrant_label(important, urgent)
+    } else {
+        None
+    };
     Ok(Subproject {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -1854,22 +1927,30 @@ fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
         status: row.get(6)?,
         last_touched_at: row.get(7)?,
         next_title: row.get(8)?,
-        kind: row.get(9)?,
+        kind,
         progress: row.get(10)?,
-        important: important_int.map(|value| value != 0),
-        due_at: row.get(12)?,
-        repeat_days: row.get(13)?,
-        remind_at: row.get(14)?,
-        progress_percent: row.get(15)?,
+        important,
+        urgent,
+        due_at: row.get(13)?,
+        repeat_days: row.get(14)?,
+        remind_at: row.get(15)?,
+        progress_percent: row.get(16)?,
+        quadrant,
     })
 }
 
 fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
     let important_int: Option<i64> = row.get(6)?;
+    let urgent_int: Option<i64> = row.get(7)?;
     let important = important_int.map(|value| value != 0);
+    let urgent = urgent_int.map(|value| value != 0);
     let kind: String = row.get(1)?;
-    let due_at: Option<String> = row.get(7)?;
-    let quadrant = quadrant_label(&kind, important, due_at.as_deref());
+    let due_at: Option<String> = row.get(8)?;
+    let quadrant = if kind == "task" {
+        quadrant_label(important, urgent)
+    } else {
+        None
+    };
     Ok(Item {
         id: row.get(0)?,
         kind,
@@ -1878,39 +1959,38 @@ fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
         project_id: row.get(4)?,
         subproject_id: row.get(5)?,
         important,
+        urgent,
         due_at,
-        estimate_min: row.get(8)?,
-        status: row.get(9)?,
-        repeat_days: row.get(10)?,
-        window_start: row.get(11)?,
-        window_end: row.get(12)?,
-        grace_min: row.get(13)?,
-        interrupt_after_grace: row.get::<_, i64>(14)? != 0,
-        waiting_on: row.get(15)?,
-        follow_up_at: row.get(16)?,
-        started_at: row.get(17)?,
-        snooze_until: row.get(18)?,
-        project_name: row.get(22)?,
-        subproject_name: row.get(23)?,
+        estimate_min: row.get(9)?,
+        status: row.get(10)?,
+        repeat_days: row.get(11)?,
+        window_start: row.get(12)?,
+        window_end: row.get(13)?,
+        grace_min: row.get(14)?,
+        interrupt_after_grace: row.get::<_, i64>(15)? != 0,
+        waiting_on: row.get(16)?,
+        follow_up_at: row.get(17)?,
+        started_at: row.get(18)?,
+        snooze_until: row.get(19)?,
+        project_name: row.get(23)?,
+        subproject_name: row.get(24)?,
         quadrant,
     })
 }
 
-fn quadrant_label(kind: &str, important: Option<bool>, due_at: Option<&str>) -> Option<String> {
-    if kind != "task" {
+fn quadrant_label(important: Option<bool>, urgent: Option<bool>) -> Option<String> {
+    let Some(important) = important else {
         return None;
-    }
-    let important = important == Some(true);
-    let urgent = due_at
-        .and_then(parse_stored)
-        .map(|due| due.date_naive() <= now().date_naive())
-        .unwrap_or(false);
+    };
+    let Some(urgent) = urgent else {
+        return None;
+    };
     Some(
         match (important, urgent) {
             (true, true) => "重要且紧急",
             (true, false) => "重要不紧急",
-            (false, true) => "不重要但着急",
-            (false, false) => "可以以后",
+            (false, true) => "不重要但紧急",
+            (false, false) => "不重要不紧急",
         }
         .into(),
     )
@@ -2032,6 +2112,7 @@ mod tests {
                 kind: "regular".into(),
                 name: "报价".into(),
                 important: true,
+                urgent: true,
                 progress: "doing".into(),
                 due_at: None,
                 repeat_days: None,
@@ -2045,6 +2126,11 @@ mod tests {
         assert_eq!(sub.progress, "doing");
         assert_eq!(sub.progress_percent, Some(40));
         assert_eq!(sub.kind, "regular");
+        assert_eq!(sub.quadrant.as_deref(), Some("重要且紧急"));
+        let dated = set_subproject_due(&conn, sub.id, Some("2099-12-31T18:00")).unwrap();
+        assert!(dated.due_at.as_deref().unwrap_or("").starts_with("2099-12-31T18:00"));
+        let cleared = set_subproject_due(&conn, sub.id, None).unwrap();
+        assert!(cleared.due_at.is_none());
         let moved = set_subproject_progress(&conn, sub.id, "doing", Some(75), Some("  改完第三版报价  ")).unwrap();
         assert_eq!(moved.progress_percent, Some(75));
         assert_eq!(moved.status, "active");
@@ -2069,6 +2155,7 @@ mod tests {
                 kind: "periodic".into(),
                 name: "晨间记录".into(),
                 important: false,
+                urgent: false,
                 progress: String::new(),
                 due_at: None,
                 repeat_days: Some("1,2,3,4,5".into()),
@@ -2103,6 +2190,7 @@ mod tests {
                 kind: "regular".into(),
                 name: "报价".into(),
                 important: true,
+                urgent: false,
                 progress: "doing".into(),
                 due_at: None,
                 repeat_days: None,

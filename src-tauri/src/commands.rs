@@ -24,6 +24,7 @@ pub struct JudgmentView {
     pub reason: String,
     pub snooze_min: i64,
     pub match_source: String,
+    pub thinking: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -110,6 +111,16 @@ pub fn set_subproject_progress(
 ) -> Result<db::Subproject, String> {
     let conn = connection(&state)?;
     db::set_subproject_progress(&conn, id, &progress, progress_percent, log.as_deref())
+}
+
+#[tauri::command]
+pub fn set_subproject_due(
+    state: State<'_, AppData>,
+    id: i64,
+    due_at: Option<String>,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_due(&conn, id, due_at.as_deref())
 }
 
 #[tauri::command]
@@ -296,6 +307,25 @@ pub fn check_reminders(app: AppHandle, state: State<'_, AppData>) -> Result<Opti
 }
 
 #[tauri::command]
+pub async fn test_ai_connection(
+    state: State<'_, AppData>,
+    base_url: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Result<String, String> {
+    let config = {
+        let conn = connection(&state)?;
+        ai::resolve_probe_config(
+            &conn,
+            base_url.as_deref(),
+            model.as_deref(),
+            api_key.as_deref(),
+        )?
+    };
+    ai::probe(config).await
+}
+
+#[tauri::command]
 pub async fn ai_clarify(state: State<'_, AppData>, id: i64) -> Result<ai::ClarifyResult, String> {
     let conn = connection(&state)?;
     let item = db::get_item(&conn, id)?;
@@ -316,6 +346,24 @@ pub async fn ai_morning(state: State<'_, AppData>) -> Result<ai::MorningResult, 
 }
 
 #[tauri::command]
+pub async fn ai_follow_up_lines(
+    state: State<'_, AppData>,
+    id: i64,
+    extra: Option<String>,
+) -> Result<ai::FollowUpLines, String> {
+    let (item, config) = {
+        let conn = connection(&state)?;
+        let item = db::get_item(&conn, id)?;
+        if item.kind != "waiting" {
+            return Err("只有等待可以生成问询话术".into());
+        }
+        let config = ai::load_config(&conn)?;
+        (item, config)
+    };
+    ai::follow_up_lines(config, &item, extra.as_deref().unwrap_or("")).await
+}
+
+#[tauri::command]
 pub async fn ai_weekly(state: State<'_, AppData>) -> Result<ai::WeeklyResult, String> {
     let conn = connection(&state)?;
     let packet = db::weekly_packet(&conn)?;
@@ -332,15 +380,15 @@ async fn judge_reminder(state: &State<'_, AppData>, text: &str) -> Result<(Judgm
         }
         (db::work_items(&conn)?, ai::load_config(&conn)?)
     };
-    let (ai_id, attempted) = match config.as_ref() {
+    let (ai_id, attempted, thinking) = match config.as_ref() {
         Some(config) => match ai::match_id(config, text, &items).await {
-            Ok(id) => (id, true),
+            Ok((id, thinking)) => (id, true, thinking),
             Err(err) => {
                 eprintln!("ai match: {err}");
-                (None, false)
+                (None, false, None)
             }
         },
-        None => (None, false),
+        None => (None, false, None),
     };
     let conn = connection(state)?;
     let reminder = db::load_reminder(&conn)?.ok_or("没有进行中的提醒")?;
@@ -378,7 +426,8 @@ async fn judge_reminder(state: &State<'_, AppData>, text: &str) -> Result<(Judgm
         reason: judgment.reason.clone(),
         snooze_min: judgment.snooze_min,
         match_source: if attempted { "ai".into() } else { "rules".into() },
-        };
+        thinking,
+    };
     Ok((view, judgment))
 }
 

@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { api, message } from "./api";
 import type { Item, MorningResult, TodayBoard } from "./types";
 import { dailyState } from "./types";
-import { Empty, ErrorText, when } from "./widgets";
+import { AiBusy, AiThinking, Empty, ErrorText, when } from "./widgets";
 
 export function Today({ revision }: { revision: number }) {
   const [board, setBoard] = useState<TodayBoard | null>(null);
   const [tasks, setTasks] = useState<Item[]>([]);
   const [pick, setPick] = useState("");
   const [morning, setMorning] = useState<MorningResult | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
@@ -39,7 +40,7 @@ export function Today({ revision }: { revision: number }) {
   return (
     <section>
       <h1>今天</h1>
-      <p className="lead">重要由你标。截止在今天或已经过期，算作紧急。弹窗只在到点、过宽限和停滞时出现。</p>
+      <p className="lead">重要和紧急由你标成四象限。截止时间可选。弹窗只在到点、过宽限和停滞时出现。</p>
       <ErrorText text={error} />
       <h2>今日三件</h2>
       {board && board.slots.length === 0 && <Empty text="今天还没有自己选的三件。" />}
@@ -90,12 +91,32 @@ export function Today({ revision }: { revision: number }) {
         ))}
       </div>
       <div className="actions" style={{ justifyContent: "flex-start", marginTop: 8 }}>
-        <button onClick={() => void run(async () => setMorning(await api.morning()))}>生成建议</button>
+        <button
+          disabled={aiBusy}
+          onClick={() => {
+            if (aiBusy) return;
+            setAiBusy(true);
+            void (async () => {
+              try {
+                setMorning(await api.morning());
+                setError("");
+              } catch (reason) {
+                setError(message(reason));
+              } finally {
+                setAiBusy(false);
+              }
+            })();
+          }}
+        >
+          {aiBusy ? "生成中…" : "生成建议"}
+        </button>
         {morning && morning.picks.length > 0 && (
-          <button className="primary" onClick={() => void run(() => api.setToday(morning.picks.map((pick) => pick.id)))}>用这三件</button>
+          <button className="primary" disabled={aiBusy} onClick={() => void run(() => api.setToday(morning.picks.map((pick) => pick.id)))}>用这三件</button>
         )}
       </div>
+      {aiBusy && <AiBusy label="正在生成今日建议" />}
       {morning && <p className="note">{morning.note}</p>}
+      {morning && <AiThinking text={morning.thinking} />}
       {morning?.picks.map((pick) => (
         <p key={pick.id} className="note">{pick.title}：{pick.reason}</p>
       ))}
@@ -117,7 +138,7 @@ export function Today({ revision }: { revision: number }) {
       </div>
 
       <h2>杂事，不单独打断</h2>
-      {board && board.chores.length === 0 && <Empty text="没有挤在今天的不重要事项。" />}
+      {board && board.chores.length === 0 && <Empty text="没有不重要但紧急的事。" />}
       <div className="list">
         {board?.chores.map((item) => (
           <article className="row" key={item.id}>

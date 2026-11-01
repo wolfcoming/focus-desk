@@ -16,7 +16,7 @@ type Page = "today" | "inbox" | "projects" | "waiting" | "progress" | "settings"
 
 const pages: { id: Page; label: string }[] = [
   { id: "today", label: "今天" },
-  { id: "inbox", label: "收集箱" },
+  { id: "inbox", label: "临时任务" },
   { id: "projects", label: "项目" },
   { id: "waiting", label: "等待" },
   { id: "progress", label: "进度" },
@@ -118,7 +118,7 @@ function Shell() {
       </aside>
       <main className="main">
         <form className="capture" onSubmit={(event) => { event.preventDefault(); void capture(); }}>
-          <input value={draft} placeholder="随手记一条，先不用分类" onChange={(event) => setDraft(event.target.value)} />
+          <input value={draft} placeholder="随手记一条临时任务，先不用分类" onChange={(event) => setDraft(event.target.value)} />
           <button className="primary" type="submit">收下</button>
         </form>
         <ErrorText text={error} />
