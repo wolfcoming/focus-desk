@@ -4,7 +4,7 @@ import type { Item, MorningResult, TodayBoard } from "./types";
 import { dailyState } from "./types";
 import { AiBusy, AiThinking, Empty, ErrorText, when } from "./widgets";
 
-export function Today({ revision }: { revision: number }) {
+export function Today({ revision, onOpen }: { revision: number; onOpen: (projectId: number) => void }) {
   const [board, setBoard] = useState<TodayBoard | null>(null);
   const [tasks, setTasks] = useState<Item[]>([]);
   const [pick, setPick] = useState("");
@@ -75,7 +75,15 @@ export function Today({ revision }: { revision: number }) {
         {board?.slots.map((item, index) => (
           <article className="row" key={item.id}>
             <div>
-              <h3>{index + 1}. {item.title}</h3>
+              <h3>
+                {item.projectId ? (
+                  <button type="button" className="title-button" onClick={() => onOpen(item.projectId as number)}>
+                    {index + 1}. {item.title}
+                  </button>
+                ) : (
+                  <>{index + 1}. {item.title}</>
+                )}
+              </h3>
               <div className="meta">
                 {item.quadrant} · {item.subprojectName} · {item.estimateMin} 分钟
                 {item.status === "doing" ? " · 正在做" : ""}

@@ -71,7 +71,7 @@ function Shell() {
     <div className="app">
       <aside className="rail">
         <div className="brand">
-          <strong>Focus Desk</strong>
+          <strong>Little Fun</strong>
           <span>今天只盯三件</span>
         </div>
         <nav className="nav">
@@ -122,7 +122,12 @@ function Shell() {
           <button className="primary" type="submit">收下</button>
         </form>
         <ErrorText text={error} />
-        {page === "today" && <Today revision={revision} />}
+        {page === "today" && (
+          <Today
+            revision={revision}
+            onOpen={(id) => { setPage("projects"); setProjectId(id); setProjectTick((value) => value + 1); }}
+          />
+        )}
         {page === "inbox" && <Inbox revision={revision} />}
         {page === "projects" && (
           <Projects

@@ -124,6 +124,17 @@ pub fn set_subproject_due(
 }
 
 #[tauri::command]
+pub fn set_subproject_reminder(
+    state: State<'_, AppData>,
+    id: i64,
+    remind: bool,
+    remind_at: Option<String>,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_reminder(&conn, id, remind, remind_at.as_deref())
+}
+
+#[tauri::command]
 pub fn set_subproject_quadrant(
     state: State<'_, AppData>,
     id: i64,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Focus Desk",
+  "productName": "Little Fun",
   "version": "0.1.0",
   "identifier": "com.focusdesk.app",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Focus Desk",
+        "title": "Little Fun",
         "width": 1120,
         "height": 780,
         "minWidth": 920,
