@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, message } from "./api";
-import type { Item, ItemDraft, Project, Subproject } from "./types";
+import type { Item, ItemDraft, Project } from "./types";
 import { parseQuadrant, quadrantValue, QUADRANT_OPTIONS } from "./types";
 import { AiBusy, AiThinking, DateTimeField, Empty, ErrorText, Field } from "./widgets";
 
@@ -30,7 +30,6 @@ function asInboxKind(kind: string) {
 export function Inbox({ revision }: { revision: number }) {
   const [items, setItems] = useState<Item[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [subs, setSubs] = useState<Subproject[]>([]);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [note, setNote] = useState("");
   const [thinking, setThinking] = useState<string | null>(null);
@@ -38,14 +37,12 @@ export function Inbox({ revision }: { revision: number }) {
   const [error, setError] = useState("");
 
   async function load() {
-    const [inbox, projectList, subprojects] = await Promise.all([
+    const [inbox, projectList] = await Promise.all([
       api.listItems("inbox"),
       api.listProjects(),
-      api.listSubprojects(null),
     ]);
     setItems(inbox.filter((item) => item.status === "inbox"));
     setProjects(projectList.filter((project) => project.status !== "archived"));
-    setSubs(subprojects.filter((sub) => sub.status !== "archived"));
   }
 
   useEffect(() => {
@@ -74,8 +71,8 @@ export function Inbox({ revision }: { revision: number }) {
       setDraft({
         ...result.draft,
         kind,
-        projectId: kind === "task" ? result.draft.projectId : null,
-        subprojectId: kind === "waiting" ? result.draft.subprojectId : null,
+        projectId: result.draft.projectId,
+        subprojectId: null,
         estimateMin: null,
         waitingOn: kind === "waiting" ? result.draft.waitingOn : null,
         followUpAt: kind === "waiting" ? result.draft.followUpAt : null,
@@ -96,8 +93,8 @@ export function Inbox({ revision }: { revision: number }) {
     setDraft({
       ...draft,
       kind: next,
-      projectId: next === "task" ? draft.projectId : null,
-      subprojectId: next === "waiting" ? draft.subprojectId : null,
+      projectId: draft.projectId,
+      subprojectId: null,
       estimateMin: null,
       important: next === "task" ? draft.important : null,
       urgent: next === "task" ? draft.urgent : null,
@@ -114,8 +111,8 @@ export function Inbox({ revision }: { revision: number }) {
       await api.saveItem({
         ...draft,
         kind,
-        projectId: kind === "task" ? draft.projectId : null,
-        subprojectId: kind === "waiting" ? draft.subprojectId : null,
+        projectId: draft.projectId,
+        subprojectId: null,
         estimateMin: null,
       });
       setDraft(null);
@@ -163,35 +160,17 @@ export function Inbox({ revision }: { revision: number }) {
               <option value="waiting">等待跟进</option>
             </select>
           </Field>
-          {kind === "task" ? (
-            <Field label="选择项目">
-              <select
-                value={draft.projectId ?? ""}
-                onChange={(event) => setDraft({ ...draft, projectId: Number(event.target.value), subprojectId: null })}
-              >
-                <option value="" disabled>选择大项目</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            </Field>
-          ) : (
-            <Field label="子任务">
-              <select
-                value={draft.subprojectId ?? ""}
-                onChange={(event) => {
-                  const subprojectId = Number(event.target.value);
-                  const sub = subs.find((item) => item.id === subprojectId);
-                  setDraft({ ...draft, subprojectId, projectId: sub?.projectId ?? null });
-                }}
-              >
-                <option value="" disabled>选择子任务</option>
-                {subs.map((sub) => (
-                  <option key={sub.id} value={sub.id}>{sub.projectName} / {sub.name}</option>
-                ))}
-              </select>
-            </Field>
-          )}
+          <Field label="选择项目">
+            <select
+              value={draft.projectId ?? ""}
+              onChange={(event) => setDraft({ ...draft, projectId: Number(event.target.value), subprojectId: null })}
+            >
+              <option value="" disabled>选择大项目</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </Field>
           {kind === "task" && (
             <>
               <Field label="四象限">

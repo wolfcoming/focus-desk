@@ -124,9 +124,66 @@ pub fn set_subproject_due(
 }
 
 #[tauri::command]
+pub fn set_subproject_quadrant(
+    state: State<'_, AppData>,
+    id: i64,
+    important: bool,
+    urgent: bool,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_quadrant(&conn, id, important, urgent)
+}
+
+#[tauri::command]
+pub fn rename_subproject(
+    state: State<'_, AppData>,
+    id: i64,
+    name: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::rename_subproject(&conn, id, &name)
+}
+
+#[tauri::command]
+pub fn reorder_subprojects(
+    state: State<'_, AppData>,
+    project_id: i64,
+    ordered_ids: Vec<i64>,
+) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::reorder_subprojects(&conn, project_id, &ordered_ids)
+}
+
+#[tauri::command]
 pub fn list_work_logs(state: State<'_, AppData>, project_id: Option<i64>) -> Result<Vec<db::WorkLog>, String> {
     let conn = connection(&state)?;
     db::list_work_logs(&conn, project_id)
+}
+
+#[tauri::command]
+pub fn add_work_log(
+    state: State<'_, AppData>,
+    subproject_id: i64,
+    body: String,
+) -> Result<db::WorkLog, String> {
+    let conn = connection(&state)?;
+    db::add_work_log(&conn, subproject_id, &body)
+}
+
+#[tauri::command]
+pub fn update_work_log(
+    state: State<'_, AppData>,
+    id: i64,
+    body: String,
+) -> Result<db::WorkLog, String> {
+    let conn = connection(&state)?;
+    db::update_work_log(&conn, id, &body)
+}
+
+#[tauri::command]
+pub fn delete_work_log(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::delete_work_log(&conn, id)
 }
 
 #[tauri::command]

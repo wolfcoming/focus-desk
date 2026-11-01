@@ -26,6 +26,7 @@ export type Subproject = {
   remindAt: string | null;
   progressPercent: number | null;
   quadrant: string | null;
+  sortOrder: number;
 };
 
 export type WorkLog = {

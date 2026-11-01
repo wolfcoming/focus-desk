@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, message } from "./api";
-import type { Item, Subproject } from "./types";
+import type { Item, Project } from "./types";
 import { AiBusy, AiThinking, DateTimeField, Dialog, Empty, ErrorText, Field, toLocalInput, when } from "./widgets";
 
-const emptyForm = { title: "", subprojectId: "", waitingOn: "", followUpAt: "" };
+const emptyForm = { title: "", projectId: "", waitingOn: "", followUpAt: "" };
 
 export function Waiting({ revision }: { revision: number }) {
   const [items, setItems] = useState<Item[]>([]);
-  const [subs, setSubs] = useState<Subproject[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -22,9 +22,9 @@ export function Waiting({ revision }: { revision: number }) {
   const [copied, setCopied] = useState<number | null>(null);
 
   async function load() {
-    const [waiting, subprojects] = await Promise.all([api.listItems("waiting"), api.listSubprojects(null)]);
+    const [waiting, projectList] = await Promise.all([api.listItems("waiting"), api.listProjects()]);
     setItems(waiting.filter((item) => item.status === "open"));
-    setSubs(subprojects.filter((sub) => sub.status !== "archived"));
+    setProjects(projectList.filter((project) => project.status !== "archived"));
   }
 
   useEffect(() => {
@@ -46,8 +46,8 @@ export function Waiting({ revision }: { revision: number }) {
         kind: "waiting",
         title: form.title,
         notes: "",
-        projectId: null,
-        subprojectId: form.subprojectId ? Number(form.subprojectId) : null,
+        projectId: form.projectId ? Number(form.projectId) : null,
+        subprojectId: null,
         important: null,
         urgent: null,
         dueAt: null,
@@ -128,7 +128,7 @@ export function Waiting({ revision }: { revision: number }) {
           <article className="row" key={item.id}>
             <div>
               <h3>{item.title}</h3>
-              <div className="meta">在等 {item.waitingOn} · {item.subprojectName} · {when(item.followUpAt)}</div>
+              <div className="meta">在等 {item.waitingOn} · {item.projectName ?? "未挂项目"} · {when(item.followUpAt)}</div>
             </div>
             <div className="actions">
               <button type="button" onClick={() => {
@@ -148,13 +148,13 @@ export function Waiting({ revision }: { revision: number }) {
         <Dialog title="新建等待" onClose={() => setOpen(false)}>
           <form className="stack" onSubmit={(event) => void create(event)}>
             <Field label="标题"><input autoFocus value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
-            <Field label="子任务">
-              <select value={form.subprojectId} onChange={(event) => setForm({ ...form, subprojectId: event.target.value })}>
+            <Field label="大项目">
+              <select value={form.projectId} onChange={(event) => setForm({ ...form, projectId: event.target.value })}>
                 <option value="">选择</option>
-                {subs.map((sub) => <option key={sub.id} value={sub.id}>{sub.projectName} / {sub.name}</option>)}
+                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
               </select>
             </Field>
-            {subs.length === 0 && <p className="note">先在左侧项目里建立一条子任务，等待要挂在它上面。</p>}
+            {projects.length === 0 && <p className="note">先在左侧项目里建立一条大项目，等待要挂在它上面。</p>}
             <Field label="在等什么"><input value={form.waitingOn} onChange={(event) => setForm({ ...form, waitingOn: event.target.value })} /></Field>
             <DateTimeField label="何时再问" value={form.followUpAt} emptyText="未设置，点这里选择" onChange={(followUpAt) => setForm({ ...form, followUpAt })} />
             <ErrorText text={error} />
@@ -215,7 +215,7 @@ export function Waiting({ revision }: { revision: number }) {
                   title: target.title,
                   notes: target.notes,
                   projectId: target.projectId,
-                  subprojectId: target.subprojectId,
+                  subprojectId: null,
                   important: null,
                   urgent: null,
                   dueAt: null,
