@@ -45,7 +45,18 @@ export const api = {
     invoke<Subproject>("set_subproject_progress", { id, progress, progressPercent, log }),
   setSubprojectDue: (id: number, dueAt: string | null) =>
     invoke<Subproject>("set_subproject_due", { id, dueAt }),
+  setSubprojectQuadrant: (id: number, important: boolean, urgent: boolean) =>
+    invoke<Subproject>("set_subproject_quadrant", { id, important, urgent }),
+  renameSubproject: (id: number, name: string) =>
+    invoke<Subproject>("rename_subproject", { id, name }),
+  reorderSubprojects: (projectId: number, orderedIds: number[]) =>
+    invoke<void>("reorder_subprojects", { projectId, orderedIds }),
   listWorkLogs: (projectId: number | null) => invoke<WorkLog[]>("list_work_logs", { projectId }),
+  addWorkLog: (subprojectId: number, body: string) =>
+    invoke<WorkLog>("add_work_log", { subprojectId, body }),
+  updateWorkLog: (id: number, body: string) =>
+    invoke<WorkLog>("update_work_log", { id, body }),
+  deleteWorkLog: (id: number) => invoke<void>("delete_work_log", { id }),
   setSubprojectStatus: (id: number, status: string, pauseSubprojectId: number | null) =>
     invoke<Subproject>("set_subproject_status", { id, status, pauseSubprojectId }),
   deleteProject: (id: number) => invoke<void>("delete_project", { id }),

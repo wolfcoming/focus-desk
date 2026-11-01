@@ -42,6 +42,7 @@ pub struct Subproject {
     pub remind_at: Option<String>,
     pub progress_percent: Option<i64>,
     pub quadrant: Option<String>,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -212,7 +213,8 @@ CREATE TABLE IF NOT EXISTS subprojects (
   last_touched_at TEXT NOT NULL,
   stall_snooze_until TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY,
@@ -317,10 +319,13 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     ensure_column(conn, "subprojects", "progress", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "subprojects", "progress_percent", "INTEGER")?;
     ensure_column(conn, "items", "urgent", "INTEGER NOT NULL DEFAULT 0")?;
+    if ensure_column(conn, "subprojects", "sort_order", "INTEGER NOT NULL DEFAULT 0")? {
+        backfill_subproject_sort_orders(conn)?;
+    }
     Ok(())
 }
 
-fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<bool, String> {
     let mut stmt = conn
         .prepare(&format!("PRAGMA table_info({table})"))
         .map_err(|err| err.to_string())?;
@@ -330,11 +335,54 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.to_string())?;
     if names.iter().any(|name| name == column) {
-        return Ok(());
+        return Ok(false);
     }
     conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    Ok(true)
+}
+
+fn backfill_subproject_sort_orders(conn: &Connection) -> Result<(), String> {
+    let project_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT project_id FROM subprojects")
+            .map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())?
+    };
+    for project_id in project_ids {
+        let ids: Vec<i64> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM subprojects WHERE project_id = ?1
+                     ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, id DESC",
+                )
+                .map_err(|err| err.to_string())?;
+            let rows = stmt
+                .query_map(params![project_id], |row| row.get(0))
+                .map_err(|err| err.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())?
+        };
+        for (index, id) in ids.into_iter().enumerate() {
+            conn.execute(
+                "UPDATE subprojects SET sort_order = ?2 WHERE id = ?1",
+                params![id, index as i64],
+            )
+            .map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn next_sub_sort_order(conn: &Connection, project_id: i64) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM subprojects WHERE project_id = ?1",
+        params![project_id],
+        |row| row.get(0),
+    )
+    .map_err(|err| err.to_string())
 }
 
 const SUB_FROM: &str = "
@@ -350,7 +398,8 @@ SELECT s.id, s.project_id, p.name, s.name, s.done_criteria, s.target_date, s.sta
        ),
        (SELECT i.repeat_days FROM items i WHERE i.subproject_id = s.id AND i.kind = 'daily' ORDER BY i.id LIMIT 1),
        (SELECT i.window_start FROM items i WHERE i.subproject_id = s.id AND i.kind = 'daily' ORDER BY i.id LIMIT 1),
-       s.progress_percent
+       s.progress_percent,
+       COALESCE(s.sort_order, 0)
 FROM subprojects s
 JOIN projects p ON p.id = s.project_id
 ";
@@ -425,7 +474,7 @@ pub fn set_project_status(
 pub fn list_subprojects(conn: &Connection, project_id: Option<i64>) -> Result<Vec<Subproject>, String> {
     let sql = format!(
         "{SUB_FROM} WHERE (?1 IS NULL OR s.project_id = ?1)
-         ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, s.id DESC"
+         ORDER BY COALESCE(s.sort_order, 0), s.id"
     );
     let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
     let rows = stmt
@@ -480,10 +529,11 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
     } else {
         None
     };
+    let sort_order = next_sub_sort_order(&tx, input.project_id)?;
     tx.execute(
-        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent)
-         VALUES (?1, ?2, '', ?3, ?4, ?5, ?5, ?5, ?6, ?7, ?8)",
-        params![input.project_id, name, due, status, stamp, kind, progress, progress_percent],
+        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
+         VALUES (?1, ?2, '', ?3, ?4, ?5, ?5, ?5, ?6, ?7, ?8, ?9)",
+        params![input.project_id, name, due, status, stamp, kind, progress, progress_percent, sort_order],
     )
     .map_err(|err| err.to_string())?;
     let sub_id = tx.last_insert_rowid();
@@ -599,6 +649,119 @@ pub fn set_subproject_status(
     get_subproject(conn, id)
 }
 
+pub fn rename_subproject(conn: &Connection, id: i64, name: &str) -> Result<Subproject, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("子任务需要一个名称".into());
+    }
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let (old_name, kind): (String, String) = tx
+        .query_row(
+            "SELECT name, COALESCE(kind, 'regular') FROM subprojects WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    let stamp = timeutil::now_iso();
+    let changed = tx
+        .execute(
+            "UPDATE subprojects SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, name, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个子任务".into());
+    }
+    let item_kind = if kind == "periodic" { "daily" } else { "task" };
+    let renamed = tx
+        .execute(
+            "UPDATE items SET title = ?3, updated_at = ?4
+             WHERE subproject_id = ?1 AND kind = ?2 AND title = ?5",
+            params![id, item_kind, name, stamp, old_name],
+        )
+        .map_err(|err| err.to_string())?;
+    if renamed == 0 {
+        tx.execute(
+            "UPDATE items SET title = ?3, updated_at = ?4
+             WHERE id = (
+               SELECT id FROM items
+               WHERE subproject_id = ?1 AND kind = ?2 AND status IN ('open','doing')
+               ORDER BY CASE status WHEN 'doing' THEN 0 ELSE 1 END, id
+               LIMIT 1
+             )",
+            params![id, item_kind, name, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    tx.commit().map_err(|err| err.to_string())?;
+    get_subproject(conn, id)
+}
+
+pub fn add_work_log(conn: &Connection, subproject_id: i64, body: &str) -> Result<WorkLog, String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err("写一下进展内容".into());
+    }
+    let (progress, percent): (String, Option<i64>) = conn
+        .query_row(
+            "SELECT COALESCE(progress, ''), progress_percent FROM subprojects WHERE id = ?1",
+            params![subproject_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    let stamp = timeutil::now_iso();
+    conn.execute(
+        "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![subproject_id, body, progress, percent, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    let id = conn.last_insert_rowid();
+    touch_subproject(conn, subproject_id)?;
+    get_work_log(conn, id)
+}
+
+pub fn update_work_log(conn: &Connection, id: i64, body: &str) -> Result<WorkLog, String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err("写一下进展内容".into());
+    }
+    let changed = conn
+        .execute("UPDATE work_logs SET body = ?2 WHERE id = ?1", params![id, body])
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这条进展".into());
+    }
+    get_work_log(conn, id)
+}
+
+pub fn delete_work_log(conn: &Connection, id: i64) -> Result<(), String> {
+    let changed = conn
+        .execute("DELETE FROM work_logs WHERE id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这条进展".into());
+    }
+    Ok(())
+}
+
+fn get_work_log(conn: &Connection, id: i64) -> Result<WorkLog, String> {
+    conn.query_row(
+        "SELECT id, subproject_id, body, progress, progress_percent, created_at FROM work_logs WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(WorkLog {
+                id: row.get(0)?,
+                subproject_id: row.get(1)?,
+                body: row.get(2)?,
+                progress: row.get(3)?,
+                progress_percent: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        },
+    )
+    .map_err(|_| "找不到这条进展".to_string())
+}
+
 pub fn set_subproject_due(conn: &Connection, id: i64, due_at: Option<&str>) -> Result<Subproject, String> {
     let due = normalize_optional(due_at)?;
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
@@ -626,6 +789,43 @@ pub fn set_subproject_due(conn: &Connection, id: i64, due_at: Option<&str>) -> R
         "UPDATE items SET due_at = ?2, updated_at = ?3
          WHERE subproject_id = ?1 AND kind = 'task'",
         params![id, due, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    tx.commit().map_err(|err| err.to_string())?;
+    get_subproject(conn, id)
+}
+
+pub fn set_subproject_quadrant(
+    conn: &Connection,
+    id: i64,
+    important: bool,
+    urgent: bool,
+) -> Result<Subproject, String> {
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let kind: String = tx
+        .query_row(
+            "SELECT COALESCE(kind, 'regular') FROM subprojects WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    if kind == "periodic" {
+        return Err("周期性任务没有四象限".into());
+    }
+    let stamp = timeutil::now_iso();
+    let changed = tx
+        .execute(
+            "UPDATE items SET important = ?2, urgent = ?3, updated_at = ?4
+             WHERE subproject_id = ?1 AND kind = 'task'",
+            params![id, bool_int(important), bool_int(urgent), stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed == 0 {
+        return Err("这个子任务还没有可改的任务项".into());
+    }
+    tx.execute(
+        "UPDATE subprojects SET updated_at = ?2 WHERE id = ?1",
+        params![id, stamp],
     )
     .map_err(|err| err.to_string())?;
     tx.commit().map_err(|err| err.to_string())?;
@@ -855,10 +1055,11 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
             )
             .map_err(|err| err.to_string())?;
         }
+        let sort_order = next_sub_sort_order(&tx, project_id)?;
         tx.execute(
-            "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent)
-             VALUES (?1, ?2, '', ?3, 'active', ?4, ?4, ?4, 'regular', 'doing', NULL)",
-            params![project_id, prepared.title, prepared.due_at, stamp],
+            "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
+             VALUES (?1, ?2, '', ?3, 'active', ?4, ?4, ?4, 'regular', 'doing', NULL, ?5)",
+            params![project_id, prepared.title, prepared.due_at, stamp, sort_order],
         )
         .map_err(|err| err.to_string())?;
         prepared.subproject_id = Some(tx.last_insert_rowid());
@@ -1206,10 +1407,11 @@ fn insert_sub(
     snooze: Option<&str>,
     stamp: &str,
 ) -> Result<i64, String> {
+    let sort_order = next_sub_sort_order(conn, project_id)?;
     conn.execute(
-        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, stall_snooze_until, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        params![project_id, name, criteria, target_date, status, touched, snooze, stamp],
+        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, stall_snooze_until, created_at, updated_at, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
+        params![project_id, name, criteria, target_date, status, touched, snooze, stamp, sort_order],
     )
     .map_err(|err| err.to_string())?;
     Ok(conn.last_insert_rowid())
@@ -1367,12 +1569,12 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
     )?;
     insert_item(
         &tx, "waiting", "等客户确认报价口径", "",
-        Some(delivery), Some(quote), None, None, None, "open",
+        Some(delivery), None, None, None, None, "open",
         None, None, None, None, 0, Some("客户王敏"), Some(&timeutil::iso(moment - Duration::hours(2))), None, None, None, &stamp,
     )?;
     insert_item(
         &tx, "waiting", "等设计交首页视觉", "",
-        Some(launch), Some(homepage), None, None, None, "open",
+        Some(launch), None, None, None, None, "open",
         None, None, None, None, 0, Some("设计组"), Some(&timeutil::iso(moment + Duration::days(1))), None, None, None, &stamp,
     )?;
     insert_item(&tx, "inbox", "客户说合同还要改一版，不知道归到哪条线", "给收集箱整理用，智能体可以建议挂到合同盖章。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
@@ -1791,8 +1993,8 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
             })
         }
         "waiting" => {
-            let sub_id = draft.subproject_id.ok_or("等待要挂在子任务上")?;
-            let sub = get_subproject(conn, sub_id)?;
+            let project_id = draft.project_id.ok_or("等待要挂在大项目上")?;
+            let _ = get_project(conn, project_id)?;
             let waiting_on = draft.waiting_on.clone().unwrap_or_default();
             if waiting_on.trim().is_empty() {
                 return Err("写一下在等什么".into());
@@ -1802,8 +2004,8 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 kind: "waiting".into(),
                 title: title.into(),
                 notes,
-                project_id: Some(sub.project_id),
-                subproject_id: Some(sub_id),
+                project_id: Some(project_id),
+                subproject_id: None,
                 important: None,
                 urgent: None,
                 due_at: None,
@@ -1936,7 +2138,45 @@ fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
         remind_at: row.get(15)?,
         progress_percent: row.get(16)?,
         quadrant,
+        sort_order: row.get(17)?,
     })
+}
+
+pub fn reorder_subprojects(conn: &Connection, project_id: i64, ordered_ids: &[i64]) -> Result<(), String> {
+    if ordered_ids.is_empty() {
+        return Ok(());
+    }
+    let _ = get_project(conn, project_id)?;
+    let existing: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM subprojects WHERE project_id = ?1 ORDER BY COALESCE(sort_order, 0), id")
+            .map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map(params![project_id], |row| row.get(0))
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())?
+    };
+    if existing.len() != ordered_ids.len() {
+        return Err("子任务列表已变化，请刷新后再排".into());
+    }
+    let mut seen = existing.clone();
+    seen.sort_unstable();
+    let mut incoming = ordered_ids.to_vec();
+    incoming.sort_unstable();
+    if seen != incoming {
+        return Err("只能调整当前大项目下的子任务顺序".into());
+    }
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let stamp = timeutil::now_iso();
+    for (index, id) in ordered_ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE subprojects SET sort_order = ?2, updated_at = ?3 WHERE id = ?1 AND project_id = ?4",
+            params![id, index as i64, stamp, project_id],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    tx.commit().map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {

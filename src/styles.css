@@ -233,11 +233,82 @@ h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1); }
 }
+.progress-section { max-width: none; }
+.progress-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.progress-chain-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+.progress-arrow {
+  color: #6f675e;
+  font-size: 14px;
+  flex: 0 0 auto;
+  user-select: none;
+}
+.progress-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 200px;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid #e0d6c8;
+  border-radius: 6px;
+  background: #faf7f1;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.progress-step:hover { border-color: #0e5c56; }
+.progress-step-time {
+  font-size: 11px;
+  color: #6f675e;
+  line-height: 1.2;
+}
+.progress-step-body {
+  font-size: 13px;
+  color: #1e1a16;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.progress-step-edit {
+  max-width: 280px;
+  min-width: 200px;
+  gap: 8px;
+  cursor: default;
+}
+.progress-step-edit textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 56px;
+}
+.progress-append {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 180px;
+  min-width: 160px;
+  max-width: 320px;
+}
+.progress-append input {
+  flex: 1;
+  min-width: 0;
+}
+.progress-append button { flex: 0 0 auto; }
 .log-line { margin-top: 4px; color: #1e1a16; font-size: 13px; white-space: pre-wrap; }
 .log-line span { display: block; color: #6f675e; }
 .log-history { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .log-history li { font-size: 13px; white-space: pre-wrap; }
 .log-history li span { display: block; color: #6f675e; }
+.log-actions { justify-content: flex-end; }
 .error { color: #8f3d1b; font-weight: 600; margin: 8px 0; }
 .must { color: #8f3d1b; }
 .empty { color: #6f675e; padding: 8px 0 16px; }

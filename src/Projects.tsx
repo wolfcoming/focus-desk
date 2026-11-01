@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState, type FormEvent } from "react";
 import { api, message } from "./api";
 import type { Limits, Project, Subproject, WorkLog } from "./types";
-import { parseQuadrant, projectStatus, QUADRANT_OPTIONS, subStatus } from "./types";
+import { parseQuadrant, projectStatus, quadrantValue, QUADRANT_OPTIONS, subStatus } from "./types";
 import { DateTimeField, DayChecks, Dialog, Empty, ErrorText, Field, when } from "./widgets";
 
 const emptyProjectForm = { name: "", outcome: "", status: "active" };
@@ -188,6 +188,10 @@ export function Projects({
   const [createSub, setCreateSub] = useState(false);
   const [openSubId, setOpenSubId] = useState<number | null>(null);
   const [progressForm, setProgressForm] = useState({ progress: "doing", progressPercent: "", log: "" });
+  const [nameDraft, setNameDraft] = useState("");
+  const [updateDraft, setUpdateDraft] = useState("");
+  const [editingLogId, setEditingLogId] = useState<number | null>(null);
+  const [editingLogBody, setEditingLogBody] = useState("");
   const [deleteSub, setDeleteSub] = useState<Subproject | null>(null);
   const [subForm, setSubForm] = useState(emptySubForm);
 
@@ -211,6 +215,11 @@ export function Projects({
   useEffect(() => {
     setOpenSubId(null);
   }, [selectedId, projectTick]);
+
+  useEffect(() => {
+    const currentOpen = subs.find((sub) => sub.id === openSubId);
+    if (currentOpen) setNameDraft(currentOpen.name);
+  }, [subs, openSubId]);
 
   async function run(action: () => Promise<unknown>) {
     if (busy) return;
@@ -241,6 +250,10 @@ export function Projects({
   function openSub(sub: Subproject) {
     setError("");
     setOpenSubId(sub.id);
+    setNameDraft(sub.name);
+    setUpdateDraft("");
+    setEditingLogId(null);
+    setEditingLogBody("");
     setProgressForm({
       progress: progressOf(sub),
       progressPercent: sub.progressPercent == null ? "" : String(sub.progressPercent),
@@ -304,13 +317,39 @@ export function Projects({
           <h2>子任务</h2>
           {mine.length === 0 && <Empty text="还没有子任务。" />}
           <div className="list">
-            {mine.map((sub) => (
+            {mine.map((sub, index) => (
               <article className="row" key={sub.id}>
                 <button type="button" className="row-open" onClick={() => openSub(sub)}>
                   <h3>{sub.name}</h3>
                   <div className="meta">{subMeta(sub)}</div>
                 </button>
                 <div className="actions">
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={busy || index === 0}
+                    onClick={() => {
+                      const ordered = mine.map((item) => item.id);
+                      const swap = index - 1;
+                      [ordered[index], ordered[swap]] = [ordered[swap], ordered[index]];
+                      void run(() => api.reorderSubprojects(current.id, ordered));
+                    }}
+                  >
+                    上移
+                  </button>
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={busy || index === mine.length - 1}
+                    onClick={() => {
+                      const ordered = mine.map((item) => item.id);
+                      const swap = index + 1;
+                      [ordered[index], ordered[swap]] = [ordered[swap], ordered[index]];
+                      void run(() => api.reorderSubprojects(current.id, ordered));
+                    }}
+                  >
+                    下移
+                  </button>
                   <button type="button" className="quiet tree-delete" onClick={() => { setError(""); setDeleteSub(sub); }}>删除</button>
                 </div>
               </article>
@@ -351,6 +390,53 @@ export function Projects({
           </div>
           <ErrorText text={error} />
           {notice && <p className="note">{notice}</p>}
+          <form
+            className="stack detail-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const target = opened;
+              const next = nameDraft.trim();
+              if (!next || next === target.name) return;
+              void run(async () => {
+                await api.renameSubproject(target.id, next);
+                setNotice(`已改名为「${next}」`);
+              });
+            }}
+          >
+            <h2>名称</h2>
+            <Field label="子任务名称">
+              <input value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} />
+            </Field>
+            <div className="actions" style={{ justifyContent: "flex-start" }}>
+              <button className="primary" type="submit" disabled={busy || !nameDraft.trim() || nameDraft.trim() === opened.name}>
+                {busy ? "正在保存…" : "保存名称"}
+              </button>
+            </div>
+          </form>
+          {opened.kind !== "periodic" && (
+            <div className="stack detail-form">
+              <h2>四象限</h2>
+              <Field label="四象限">
+                <select
+                  value={quadrantValue(opened.important, opened.urgent)}
+                  onChange={(event) => {
+                    const next = parseQuadrant(event.target.value);
+                    if (!next) return;
+                    const target = opened;
+                    void run(async () => {
+                      await api.setSubprojectQuadrant(target.id, next.important, next.urgent);
+                      setNotice(`已更新「${target.name}」的四象限`);
+                    });
+                  }}
+                >
+                  <option value="" disabled>选择四象限</option>
+                  {QUADRANT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          )}
           {opened.kind !== "periodic" && (
             <div className="stack detail-form">
               <h2>截止时间</h2>
@@ -419,7 +505,7 @@ export function Projects({
                   </span>
                 </Field>
               )}
-              <Field label="工作日志">
+              <Field label="附带进展，可空">
                 <textarea
                   rows={3}
                   placeholder="这次做了什么。可以留空。"
@@ -432,16 +518,103 @@ export function Projects({
               </div>
             </form>
           )}
-          <h2>工作日志</h2>
-          {logs.filter((log) => log.subprojectId === opened.id).length === 0 && <Empty text="还没有工作日志。" />}
-          <ul className="log-history">
-            {logs.filter((log) => log.subprojectId === opened.id).map((log) => (
-              <li key={log.id}>
-                <span>{logStamp(log)}</span>
-                {log.body}
-              </li>
-            ))}
-          </ul>
+          <div className="detail-form progress-section">
+            <h2>任务进展</h2>
+            {(() => {
+              const chain = logs
+                .filter((log) => log.subprojectId === opened.id)
+                .slice()
+                .reverse();
+              return (
+                <div className="progress-chain">
+                  {chain.map((log, index) => (
+                    <div className="progress-chain-item" key={log.id}>
+                      {index > 0 && <span className="progress-arrow" aria-hidden>→</span>}
+                      {editingLogId === log.id ? (
+                        <form
+                          className="progress-step progress-step-edit"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const body = editingLogBody.trim();
+                            if (!body) return;
+                            void run(async () => {
+                              await api.updateWorkLog(log.id, body);
+                              setEditingLogId(null);
+                              setEditingLogBody("");
+                              setNotice("已更新这条进展");
+                            });
+                          }}
+                        >
+                          <textarea
+                            rows={2}
+                            value={editingLogBody}
+                            onChange={(event) => setEditingLogBody(event.target.value)}
+                            aria-label="编辑进展"
+                          />
+                          <div className="actions log-actions">
+                            <button className="primary" type="submit" disabled={busy || !editingLogBody.trim()}>保存</button>
+                            <button type="button" className="quiet" onClick={() => { setEditingLogId(null); setEditingLogBody(""); }}>取消</button>
+                            <button
+                              type="button"
+                              className="quiet tree-delete"
+                              onClick={() => {
+                                void run(async () => {
+                                  await api.deleteWorkLog(log.id);
+                                  setEditingLogId(null);
+                                  setEditingLogBody("");
+                                  setNotice("已删除这条进展");
+                                });
+                              }}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <button
+                          type="button"
+                          className="progress-step"
+                          title={logStamp(log)}
+                          onClick={() => {
+                            setEditingLogId(log.id);
+                            setEditingLogBody(log.body);
+                          }}
+                        >
+                          <span className="progress-step-time">{when(log.createdAt)}</span>
+                          <span className="progress-step-body">{log.body.trim() || "（无文字）"}</span>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {chain.length > 0 && <span className="progress-arrow" aria-hidden>→</span>}
+                  <form
+                    className="progress-append"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const target = opened;
+                      const body = updateDraft.trim();
+                      if (!body) return;
+                      void run(async () => {
+                        await api.addWorkLog(target.id, body);
+                        setUpdateDraft("");
+                        setNotice("已追加一条进展");
+                      });
+                    }}
+                  >
+                    <input
+                      value={updateDraft}
+                      placeholder={chain.length === 0 ? "写第一条进展" : "追加进展"}
+                      onChange={(event) => setUpdateDraft(event.target.value)}
+                      aria-label="追加进展"
+                    />
+                    <button className="primary" type="submit" disabled={busy || !updateDraft.trim()}>
+                      {busy ? "…" : "追加"}
+                    </button>
+                  </form>
+                </div>
+              );
+            })()}
+          </div>
         </>
       )}
       {createSub && current && (

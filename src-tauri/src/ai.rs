@@ -152,14 +152,13 @@ pub async fn clarify(
         };
     };
     let user = format!(
-        "原句：{}\n项目：{}\n子任务：{}",
+        "原句：{}\n项目：{}",
         item.title,
         project_lines(projects),
-        sub_lines(subs)
     );
     match chat(
         &config,
-        "你是个人任务整理助手。只返回一个 JSON 对象，不要解释，不要 Markdown。字段必须是扁平值：title/notes/waitingOn/dueAt/followUpAt 只能是字符串或 null，不能是对象；projectId/subprojectId 只能是数字或 null；important/urgent 只能是 true/false。kind 只能是 task 或 waiting。项目任务用 projectId（大项目 id），不要填 subprojectId；等待跟进用 subprojectId 并给出 waitingOn 和 followUpAt。id 只能用给定的，不能编造。不要填 estimateMin。时间用 YYYY-MM-DDTHH:MM。",
+        "你是个人任务整理助手。只返回一个 JSON 对象，不要解释，不要 Markdown。字段必须是扁平值：title/notes/waitingOn/dueAt/followUpAt 只能是字符串或 null，不能是对象；projectId 只能是数字或 null；important/urgent 只能是 true/false。kind 只能是 task 或 waiting。项目任务和等待跟进都用 projectId（大项目 id），不要填 subprojectId；等待跟进还要给出 waitingOn 和 followUpAt。id 只能用给定的，不能编造。不要填 estimateMin。时间用 YYYY-MM-DDTHH:MM。",
         &user,
     )
     .await
@@ -302,11 +301,10 @@ pub async fn follow_up_lines(config: Option<AiConfig>, item: &Item, extra: &str)
         return Err("还没有配置模型".into());
     };
     let user = format!(
-        "标题：{}\n在等：{}\n项目：{}\n子任务：{}\n备注：{}\n补充：{}",
+        "标题：{}\n在等：{}\n项目：{}\n备注：{}\n补充：{}",
         item.title,
         item.waiting_on.as_deref().unwrap_or("未写"),
         item.project_name.as_deref().unwrap_or("未挂项目"),
-        item.subproject_name.as_deref().unwrap_or("未挂子任务"),
         if item.notes.trim().is_empty() { "无" } else { item.notes.as_str() },
         if extra.trim().is_empty() { "无" } else { extra.trim() }
     );
@@ -490,18 +488,14 @@ fn parse_draft(text: &str, item: &Item, projects: &[Project], subs: &[Subproject
     let estimate_min = json_i64(&value, &["estimateMin", "estimate_min"]).filter(|minutes| matches!(minutes, 15 | 25 | 50 | 90));
     let waiting_on = nonempty_opt(json_str(&value, &["waitingOn", "waiting_on"]));
     let follow_up_at = nonempty_opt(json_str(&value, &["followUpAt", "follow_up_at"]));
-    let (project_id, subproject_id) = if kind == "waiting" {
-        let subproject_id = json_i64(&value, &["subprojectId", "subproject_id"])
-            .filter(|id| subs.iter().any(|sub| sub.id == *id));
-        let project_id = subproject_id.and_then(|id| {
-            subs.iter().find(|sub| sub.id == id).map(|sub| sub.project_id)
-        });
-        (project_id, subproject_id)
-    } else {
-        let project_id = json_i64(&value, &["projectId", "project_id"])
-            .filter(|id| projects.iter().any(|project| project.id == *id));
-        (project_id, None)
-    };
+    let project_id = json_i64(&value, &["projectId", "project_id"])
+        .or_else(|| {
+            json_i64(&value, &["subprojectId", "subproject_id"]).and_then(|id| {
+                subs.iter().find(|sub| sub.id == id).map(|sub| sub.project_id)
+            })
+        })
+        .filter(|id| projects.iter().any(|project| project.id == *id));
+    let subproject_id = None;
     Ok(ItemDraft {
         id: Some(item.id),
         kind,
@@ -668,16 +662,6 @@ fn project_lines(projects: &[Project]) -> String {
     projects
         .iter()
         .map(|project| format!("{} {}（{}）", project.id, project.name, project.status))
-        .collect::<Vec<_>>()
-        .join("；")
-}
-
-fn sub_lines(subs: &[Subproject]) -> String {
-    if subs.is_empty() {
-        return "（还没有子任务）".into();
-    }
-    subs.iter()
-        .map(|sub| format!("{} {} / {}", sub.id, sub.project_name, sub.name))
         .collect::<Vec<_>>()
         .join("；")
 }
