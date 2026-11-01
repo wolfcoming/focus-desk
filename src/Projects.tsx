@@ -2,7 +2,7 @@
 import { api, message } from "./api";
 import type { Limits, Project, Subproject, WorkLog } from "./types";
 import { parseQuadrant, projectStatus, quadrantValue, QUADRANT_OPTIONS, subStatus } from "./types";
-import { DateTimeField, DayChecks, Dialog, Empty, ErrorText, Field, when } from "./widgets";
+import { DateTimeField, DayChecks, Dialog, Empty, ErrorText, Field, TimeField, when } from "./widgets";
 
 const emptyProjectForm = { name: "", outcome: "", status: "active" };
 const emptySubForm = {
@@ -189,6 +189,7 @@ export function Projects({
   const [openSubId, setOpenSubId] = useState<number | null>(null);
   const [progressForm, setProgressForm] = useState({ progress: "doing", progressPercent: "", log: "" });
   const [nameDraft, setNameDraft] = useState("");
+  const [remindDraft, setRemindDraft] = useState({ enabled: false, time: "09:00" });
   const [updateDraft, setUpdateDraft] = useState("");
   const [editingLogId, setEditingLogId] = useState<number | null>(null);
   const [editingLogBody, setEditingLogBody] = useState("");
@@ -219,6 +220,9 @@ export function Projects({
   useEffect(() => {
     const currentOpen = subs.find((sub) => sub.id === openSubId);
     if (currentOpen) setNameDraft(currentOpen.name);
+    if (currentOpen?.kind === "periodic") {
+      setRemindDraft({ enabled: currentOpen.remindAt != null, time: currentOpen.remindAt ?? "09:00" });
+    }
   }, [subs, openSubId]);
 
   async function run(action: () => Promise<unknown>) {
@@ -251,6 +255,7 @@ export function Projects({
     setError("");
     setOpenSubId(sub.id);
     setNameDraft(sub.name);
+    setRemindDraft({ enabled: sub.remindAt != null, time: sub.remindAt ?? "09:00" });
     setUpdateDraft("");
     setEditingLogId(null);
     setEditingLogBody("");
@@ -413,6 +418,44 @@ export function Projects({
               </button>
             </div>
           </form>
+          {opened.kind === "periodic" && (
+            <div className="stack detail-form">
+              <h2>提醒</h2>
+              <label className="check-line">
+                <span>定时提醒</span>
+                <input
+                  type="checkbox"
+                  checked={remindDraft.enabled}
+                  onChange={(event) => setRemindDraft({ ...remindDraft, enabled: event.target.checked })}
+                />
+              </label>
+              {remindDraft.enabled && (
+                <TimeField
+                  label="提醒时间"
+                  value={remindDraft.time}
+                  onChange={(time) => setRemindDraft({ ...remindDraft, time })}
+                />
+              )}
+              <div className="actions" style={{ justifyContent: "flex-start" }}>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy || (remindDraft.enabled === (opened.remindAt != null) && (!remindDraft.enabled || remindDraft.time === opened.remindAt))}
+                  onClick={() => {
+                    const target = opened;
+                    const enabled = remindDraft.enabled;
+                    const time = remindDraft.time;
+                    void run(async () => {
+                      await api.setSubprojectReminder(target.id, enabled, enabled ? time : null);
+                      setNotice(enabled ? `已把「${target.name}」设为 ${time} 定时提醒` : `已把「${target.name}」改为不定时提醒`);
+                    });
+                  }}
+                >
+                  {busy ? "正在保存…" : "保存提醒"}
+                </button>
+              </div>
+            </div>
+          )}
           {opened.kind !== "periodic" && (
             <div className="stack detail-form">
               <h2>四象限</h2>
@@ -703,7 +746,7 @@ export function Projects({
                   <input type="checkbox" checked={subForm.remind} onChange={(event) => setSubForm({ ...subForm, remind: event.target.checked })} />
                 </label>
                 {subForm.remind && (
-                  <Field label="提醒时间"><input type="time" value={subForm.remindAt} onChange={(event) => setSubForm({ ...subForm, remindAt: event.target.value })} /></Field>
+                  <TimeField label="提醒时间" value={subForm.remindAt} onChange={(remindAt) => setSubForm({ ...subForm, remindAt })} />
                 )}
               </>
             )}

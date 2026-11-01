@@ -1,4 +1,4 @@
-# Focus Desk
+# Little Fun
 
 个人项目管理桌面应用。Windows 和 macOS 用同一套 Tauri 工程。
 

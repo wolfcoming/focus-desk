@@ -100,6 +100,30 @@ function splitDateTime(value: string) {
   return { date: date || todayKey(), time: time.slice(0, 5) || "18:00" };
 }
 
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function shiftMonth(monthKey: string, delta: number) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const next = new Date(year, month - 1 + delta, 1);
+  return `${next.getFullYear()}-${pad2(next.getMonth() + 1)}`;
+}
+
+function monthCells(monthKey: string): (string | null)[] {
+  const [year, month] = monthKey.split("-").map(Number);
+  const offset = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const total = new Date(year, month, 0).getDate();
+  const cells: (string | null)[] = [];
+  for (let index = 0; index < offset; index += 1) cells.push(null);
+  for (let day = 1; day <= total; day += 1) cells.push(`${year}-${pad2(month)}-${pad2(day)}`);
+  return cells;
+}
+
+const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
+const hours = Array.from({ length: 24 }, (_, index) => pad2(index));
+const minutes = Array.from({ length: 60 }, (_, index) => pad2(index));
+
 export function DateTimeField({
   label,
   value,
@@ -114,6 +138,11 @@ export function DateTimeField({
   const [open, setOpen] = useState(false);
   const [draftDate, setDraftDate] = useState(todayKey());
   const [draftTime, setDraftTime] = useState("18:00");
+  const [viewMonth, setViewMonth] = useState(() => todayKey().slice(0, 7));
+
+  const hour = draftTime.slice(0, 2);
+  const minute = draftTime.slice(3, 5) || "00";
+  const cells = monthCells(viewMonth);
 
   useEffect(() => {
     if (!open) return;
@@ -130,6 +159,7 @@ export function DateTimeField({
     const next = splitDateTime(value);
     setDraftDate(next.date);
     setDraftTime(next.time);
+    setViewMonth(next.date.slice(0, 7));
     setOpen(true);
   }
 
@@ -151,8 +181,42 @@ export function DateTimeField({
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="picker-title" onMouseDown={(event) => event.stopPropagation()}>
             <h2 id="picker-title">{label}</h2>
             <div className="stack">
-              <Field label="日期"><input type="date" autoFocus value={draftDate} onChange={(event) => setDraftDate(event.target.value)} /></Field>
-              <Field label="时间"><input type="time" value={draftTime} onChange={(event) => setDraftTime(event.target.value)} /></Field>
+              <div className="picker-calendar">
+                <div className="picker-calendar-head">
+                  <button type="button" className="quiet" aria-label="上个月" onClick={() => setViewMonth(shiftMonth(viewMonth, -1))}>‹</button>
+                  <span>{viewMonth.slice(0, 4)} 年 {Number(viewMonth.slice(5, 7))} 月</span>
+                  <button type="button" className="quiet" aria-label="下个月" onClick={() => setViewMonth(shiftMonth(viewMonth, 1))}>›</button>
+                </div>
+                <div className="picker-weekdays">
+                  {weekdays.map((day) => <span key={day}>{day}</span>)}
+                </div>
+                <div className="picker-days">
+                  {cells.map((cell, index) =>
+                    cell ? (
+                      <button
+                        type="button"
+                        key={cell}
+                        className={cell === draftDate ? "picker-day selected" : "picker-day"}
+                        onClick={() => setDraftDate(cell)}
+                      >
+                        {Number(cell.slice(-2))}
+                      </button>
+                    ) : (
+                      <span key={`blank-${index}`} className="picker-day blank" />
+                    ),
+                  )}
+                </div>
+              </div>
+              <div className="picker-time">
+                <span>时间</span>
+                <select value={hour} onChange={(event) => setDraftTime(`${event.target.value}:${minute}`)}>
+                  {hours.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+                <span>:</span>
+                <select value={minute} onChange={(event) => setDraftTime(`${hour}:${event.target.value}`)}>
+                  {minutes.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
               <div className="actions">
                 <button type="button" className="quiet" onClick={() => setOpen(false)}>取消</button>
                 {value && (
@@ -184,6 +248,34 @@ export function DateTimeField({
         </div>
       )}
     </>
+  );
+}
+
+export function TimeField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const hour = value.slice(0, 2) || "09";
+  const minute = value.slice(3, 5) || "00";
+  const minuteValue = minutes.includes(minute) ? minute : "00";
+  return (
+    <div className="field">
+      <span>{label}</span>
+      <div className="picker-time">
+        <select value={hour} onChange={(event) => onChange(`${event.target.value}:${minuteValue}`)}>
+          {hours.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+        <span>:</span>
+        <select value={minuteValue} onChange={(event) => onChange(`${hour}:${event.target.value}`)}>
+          {minutes.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </div>
+    </div>
   );
 }
 

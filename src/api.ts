@@ -45,6 +45,8 @@ export const api = {
     invoke<Subproject>("set_subproject_progress", { id, progress, progressPercent, log }),
   setSubprojectDue: (id: number, dueAt: string | null) =>
     invoke<Subproject>("set_subproject_due", { id, dueAt }),
+  setSubprojectReminder: (id: number, remind: boolean, remindAt: string | null) =>
+    invoke<Subproject>("set_subproject_reminder", { id, remind, remindAt }),
   setSubprojectQuadrant: (id: number, important: boolean, urgent: boolean) =>
     invoke<Subproject>("set_subproject_quadrant", { id, important, urgent }),
   renameSubproject: (id: number, name: string) =>

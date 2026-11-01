@@ -72,7 +72,7 @@ pub fn run() {
                 });
             }
 
-            let show = MenuItem::with_id(app, "show", "打开 Focus Desk", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "打开 Little Fun", true, None::<&str>)?;
             let check = MenuItem::with_id(app, "check", "立即检查提醒", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &check, &quit])?;
@@ -81,7 +81,7 @@ pub fn run() {
             TrayIconBuilder::new()
                 .icon(icon)
                 .menu(&menu)
-                .tooltip("Focus Desk")
+                .tooltip("Little Fun")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "quit" => app.exit(0),
@@ -130,6 +130,7 @@ pub fn run() {
             commands::create_subproject,
             commands::set_subproject_progress,
             commands::set_subproject_due,
+            commands::set_subproject_reminder,
             commands::set_subproject_quadrant,
             commands::rename_subproject,
             commands::reorder_subprojects,
@@ -166,7 +167,7 @@ pub fn run() {
             commands::ai_follow_up_lines
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Focus Desk");
+        .expect("error while running Little Fun");
 }
 
 fn show_main(app: &tauri::AppHandle) {

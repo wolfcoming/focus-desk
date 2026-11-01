@@ -151,6 +151,16 @@ h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
   border-top: 1px solid #e0d6c8;
 }
 .row h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.title-button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.title-button:hover { color: #0e5c56; text-decoration: underline; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .stack { display: flex; flex-direction: column; gap: 10px; max-width: 520px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #6f675e; }
@@ -344,6 +354,18 @@ h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
   border-radius: 6px;
 }
 .picker-trigger:hover { border-color: #0e5c56; }
+.picker-calendar { display: flex; flex-direction: column; gap: 8px; }
+.picker-calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.picker-calendar-head span { font-weight: 600; }
+.picker-weekdays, .picker-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.picker-weekdays span { text-align: center; font-size: 12px; color: #8a8175; }
+.picker-day { padding: 6px 0; background: transparent; border-color: transparent; }
+.picker-day:hover { border-color: #0e5c56; }
+.picker-day.selected { background: #0e5c56; border-color: #0e5c56; color: #f7f3eb; }
+.picker-day.blank { visibility: hidden; }
+.picker-time { display: flex; align-items: center; gap: 8px; }
+.picker-time > span { color: #8a8175; }
+.picker-time select { width: auto; min-width: 68px; }
 .modal h2 { margin: 0 0 14px; }
 .modal .actions { justify-content: flex-end; margin-top: 4px; }
 @keyframes rise {

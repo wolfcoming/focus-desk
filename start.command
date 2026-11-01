@@ -1,5 +1,5 @@
 #!/bin/zsh
-# 双击运行 Focus Desk（开发模式）
+# 双击运行 Little Fun（开发模式）
 cd /Users/yangqing/focus-desk || exit 1
 
 # 使用 Node 22 和 Rust 工具链

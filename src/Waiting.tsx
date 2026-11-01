@@ -13,6 +13,8 @@ export function Waiting({ revision }: { revision: number }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editItem, setEditItem] = useState<Item | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editProjectId, setEditProjectId] = useState("");
   const [editFollowUp, setEditFollowUp] = useState("");
   const [scriptItem, setScriptItem] = useState<Item | null>(null);
   const [scriptExtra, setScriptExtra] = useState("");
@@ -72,6 +74,14 @@ export function Waiting({ revision }: { revision: number }) {
     }
   }
 
+  function openEdit(item: Item) {
+    setError("");
+    setEditItem(item);
+    setEditTitle(item.title);
+    setEditFollowUp(toLocalInput(item.followUpAt));
+    setEditProjectId(item.projectId ? String(item.projectId) : "");
+  }
+
   function openScripts(item: Item) {
     setError("");
     setScriptItem(item);
@@ -127,15 +137,15 @@ export function Waiting({ revision }: { revision: number }) {
         {items.map((item) => (
           <article className="row" key={item.id}>
             <div>
-              <h3>{item.title}</h3>
+              <h3>
+                <button type="button" className="title-button" onClick={() => openEdit(item)}>
+                  {item.title}
+                </button>
+              </h3>
               <div className="meta">在等 {item.waitingOn} · {item.projectName ?? "未挂项目"} · {when(item.followUpAt)}</div>
             </div>
             <div className="actions">
-              <button type="button" onClick={() => {
-                setError("");
-                setEditItem(item);
-                setEditFollowUp(toLocalInput(item.followUpAt));
-              }}>改时间</button>
+              <button type="button" onClick={() => openEdit(item)}>修改</button>
               <button type="button" onClick={() => void run(() => api.bumpFollowUp(item.id, 1))}>明天再问</button>
               <button type="button" onClick={() => openScripts(item)}>问询话术</button>
               <button type="button" onClick={() => void run(() => api.completeItem(item.id))}>结束</button>
@@ -202,7 +212,7 @@ export function Waiting({ revision }: { revision: number }) {
         </Dialog>
       )}
       {editItem && (
-        <Dialog title="调整询问时间" onClose={() => setEditItem(null)}>
+        <Dialog title="修改等待事项" onClose={() => setEditItem(null)}>
           <form
             className="stack"
             onSubmit={(event) => {
@@ -212,9 +222,9 @@ export function Waiting({ revision }: { revision: number }) {
                 await api.saveItem({
                   id: target.id,
                   kind: "waiting",
-                  title: target.title,
+                  title: editTitle.trim(),
                   notes: target.notes,
-                  projectId: target.projectId,
+                  projectId: editProjectId ? Number(editProjectId) : null,
                   subprojectId: null,
                   important: null,
                   urgent: null,
@@ -233,11 +243,20 @@ export function Waiting({ revision }: { revision: number }) {
             }}
           >
             <p className="note">「{editItem.title}」现在问询时间是 {when(editItem.followUpAt)}。</p>
+            <Field label="标题">
+              <input autoFocus value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
+            </Field>
+            <Field label="大项目">
+              <select value={editProjectId} onChange={(event) => setEditProjectId(event.target.value)}>
+                <option value="">不挂项目</option>
+                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            </Field>
             <DateTimeField label="何时再问" value={editFollowUp} emptyText="未设置，点这里选择" onChange={setEditFollowUp} />
             <ErrorText text={error} />
             <div className="actions">
               <button type="button" className="quiet" onClick={() => setEditItem(null)}>取消</button>
-              <button className="primary" type="submit" disabled={busy || !editFollowUp}>{busy ? "正在保存…" : "保存"}</button>
+              <button className="primary" type="submit" disabled={busy || !editFollowUp || !editTitle.trim()}>{busy ? "正在保存…" : "保存"}</button>
             </div>
           </form>
         </Dialog>

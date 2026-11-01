@@ -795,6 +795,53 @@ pub fn set_subproject_due(conn: &Connection, id: i64, due_at: Option<&str>) -> R
     get_subproject(conn, id)
 }
 
+pub fn set_subproject_reminder(
+    conn: &Connection,
+    id: i64,
+    remind: bool,
+    remind_at: Option<&str>,
+) -> Result<Subproject, String> {
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let kind: String = tx
+        .query_row(
+            "SELECT COALESCE(kind, 'regular') FROM subprojects WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    if kind != "periodic" {
+        return Err("只有周期性任务才有提醒设置".into());
+    }
+    let (start, end, grace) = if remind {
+        let start = remind_at.unwrap_or("").trim();
+        if !timeutil::valid_hhmm(start) {
+            return Err("打开定时提醒后，要选一个时间".into());
+        }
+        let end = remind_window_end(start);
+        (Some(start.to_string()), Some(end), Some(12 * 60))
+    } else {
+        (None, None, None)
+    };
+    let stamp = timeutil::now_iso();
+    tx.execute(
+        "UPDATE subprojects SET updated_at = ?2 WHERE id = ?1",
+        params![id, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    let changed = tx
+        .execute(
+            "UPDATE items SET window_start = ?2, window_end = ?3, grace_min = ?4, updated_at = ?5
+             WHERE subproject_id = ?1 AND kind = 'daily'",
+            params![id, start, end, grace, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed == 0 {
+        return Err("找不到这条周期性任务的提醒".into());
+    }
+    tx.commit().map_err(|err| err.to_string())?;
+    get_subproject(conn, id)
+}
+
 pub fn set_subproject_quadrant(
     conn: &Connection,
     id: i64,
