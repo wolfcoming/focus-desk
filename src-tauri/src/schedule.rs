@@ -161,6 +161,9 @@ fn classify_daily(
     item: &Item,
     moment: chrono::DateTime<chrono::Local>,
 ) -> Result<Option<InterruptClass>, String> {
+    if item.subproject_id.is_none() {
+        return Ok(None);
+    }
     if !timeutil::runs_on(item.repeat_days.as_deref().unwrap_or(""), moment) {
         return Ok(None);
     }

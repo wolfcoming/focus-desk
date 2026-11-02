@@ -384,6 +384,21 @@ h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
   gap: 14px;
 }
 .reminder h1 { font-size: 24px; }
+.reminder-title {
+  font: inherit;
+  font-size: inherit;
+  text-align: left;
+  max-width: 100%;
+}
+.postpone-panel {
+  border-top: 1px solid #e0d6c8;
+  padding-top: 12px;
+}
+.postpone-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .verdict {
   border-top: 1px solid #e0d6c8;
   padding-top: 12px;

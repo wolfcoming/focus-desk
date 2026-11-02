@@ -175,7 +175,6 @@ pub struct NewProject {
     pub name: String,
     pub outcome: String,
     pub status: String,
-    pub pause_project_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -426,7 +425,6 @@ pub fn create_project(conn: &Connection, input: &NewProject) -> Result<Project, 
     if !matches!(input.status.as_str(), "upcoming" | "active" | "paused") {
         return Err("新建时只能是即将开始、进行中或暂停".into());
     }
-    let _ = input.pause_project_id;
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
     let stamp = timeutil::now_iso();
     tx.execute(
@@ -443,12 +441,10 @@ pub fn set_project_status(
     conn: &Connection,
     id: i64,
     status: &str,
-    pause_project_id: Option<i64>,
 ) -> Result<Project, String> {
     if !matches!(status, "upcoming" | "active" | "paused" | "archived") {
         return Err("状态无效".into());
     }
-    let _ = pause_project_id;
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
     let stamp = timeutil::now_iso();
     let changed = tx
@@ -559,8 +555,8 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
         let item_status = if progress == "done" { "done" } else { "open" };
         let completed = if progress == "done" { Some(stamp.as_str()) } else { None };
         tx.execute(
-            "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, estimate_min, status, interrupt_after_grace, created_at, updated_at, completed_at)
-             VALUES ('task', ?1, '', ?2, ?3, ?4, ?5, ?6, 25, ?7, 0, ?8, ?8, ?9)",
+            "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, status, interrupt_after_grace, created_at, updated_at, completed_at)
+             VALUES ('task', ?1, '', ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8, ?9)",
             params![
                 name,
                 input.project_id,
@@ -1189,7 +1185,25 @@ pub fn complete_task(conn: &Connection, id: i64) -> Result<Item, String> {
     )
     .map_err(|err| err.to_string())?;
     if let Some(sub_id) = item.subproject_id {
-        touch_subproject(conn, sub_id)?;
+        let kind: String = conn
+            .query_row(
+                "SELECT COALESCE(kind, 'regular') FROM subprojects WHERE id = ?1",
+                params![sub_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "regular".into());
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE subproject_id = ?1 AND kind = 'task' AND status IN ('open','doing')",
+                params![sub_id],
+                |row| row.get(0),
+            )
+            .map_err(|err| err.to_string())?;
+        if kind == "regular" && remaining == 0 {
+            let _ = set_subproject_progress(conn, sub_id, "done", Some(100), None);
+        } else {
+            touch_subproject(conn, sub_id)?;
+        }
     }
     get_item(conn, id)
 }
@@ -1293,6 +1307,7 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
         .into_iter()
         .filter(|item| {
             item.status != "dropped"
+                && item.subproject_id.is_some()
                 && timeutil::runs_on(item.repeat_days.as_deref().unwrap_or(""), moment)
         })
         .map(|item| {
@@ -1407,6 +1422,133 @@ pub fn bump_follow_up(conn: &Connection, id: i64, days: i64) -> Result<Item, Str
     get_item(conn, id)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderTarget {
+    pub page: String,
+    pub project_id: Option<i64>,
+    pub subproject_id: Option<i64>,
+}
+
+pub fn reminder_target(conn: &Connection) -> Result<ReminderTarget, String> {
+    let reminder = load_reminder(conn)?.ok_or("没有进行中的提醒")?;
+    if let Some(item_id) = reminder.item_id {
+        let item = get_item(conn, item_id)?;
+        if item.kind == "waiting" {
+            return Ok(ReminderTarget {
+                page: "waiting".into(),
+                project_id: item.project_id,
+                subproject_id: None,
+            });
+        }
+        let project_id = item.project_id.or_else(|| {
+            item.subproject_id
+                .and_then(|sub_id| get_subproject(conn, sub_id).ok().map(|sub| sub.project_id))
+        });
+        return Ok(ReminderTarget {
+            page: "projects".into(),
+            project_id,
+            subproject_id: item.subproject_id,
+        });
+    }
+    if let Some(sub_id) = reminder.subproject_id {
+        let sub = get_subproject(conn, sub_id)?;
+        return Ok(ReminderTarget {
+            page: "projects".into(),
+            project_id: Some(sub.project_id),
+            subproject_id: Some(sub.id),
+        });
+    }
+    Err("这条提醒没有可打开的详情".into())
+}
+
+fn resolve_postpone_time(
+    minutes: Option<i64>,
+    at: Option<&str>,
+    current: Option<chrono::DateTime<chrono::Local>>,
+) -> Result<String, String> {
+    let moment = now();
+    match (minutes, at.map(str::trim).filter(|value| !value.is_empty())) {
+        (Some(delta), None) if delta > 0 => {
+            let base = current.filter(|due| *due > moment).unwrap_or(moment);
+            Ok(timeutil::iso(base + Duration::minutes(delta)))
+        }
+        (None, Some(value)) => {
+            let stamp = timeutil::parse_user_time(value)?;
+            let due = parse_stored(&stamp).ok_or("自定义时间无效")?;
+            if due <= moment {
+                return Err("自定义时间要晚于现在".into());
+            }
+            Ok(stamp)
+        }
+        _ => Err("选一个推迟时长，或填自定义时间".into()),
+    }
+}
+
+pub fn postpone_reminder_due(
+    conn: &Connection,
+    minutes: Option<i64>,
+    at: Option<&str>,
+) -> Result<(), String> {
+    let reminder = load_reminder(conn)?.ok_or("没有进行中的提醒")?;
+    let moment = now();
+    if let Some(item_id) = reminder.item_id {
+        let item = get_item(conn, item_id)?;
+        match item.kind.as_str() {
+            "task" => {
+                let current = item.due_at.as_deref().and_then(parse_stored);
+                let next = resolve_postpone_time(minutes, at, current)?;
+                if let Some(sub_id) = item.subproject_id {
+                    set_subproject_due(conn, sub_id, Some(&next))?;
+                } else {
+                    let stamp = timeutil::now_iso();
+                    conn.execute(
+                        "UPDATE items SET due_at = ?2, updated_at = ?3 WHERE id = ?1",
+                        params![item_id, next, stamp],
+                    )
+                    .map_err(|err| err.to_string())?;
+                }
+                let until = parse_stored(&next).unwrap_or(moment);
+                snooze_item(conn, item_id, ((until - moment).num_minutes()).max(1))?;
+            }
+            "waiting" => {
+                let current = item.follow_up_at.as_deref().and_then(parse_stored);
+                let next = resolve_postpone_time(minutes, at, current)?;
+                let stamp = timeutil::now_iso();
+                conn.execute(
+                    "UPDATE items SET follow_up_at = ?2, snooze_until = ?2, updated_at = ?3 WHERE id = ?1 AND kind = 'waiting'",
+                    params![item_id, next, stamp],
+                )
+                .map_err(|err| err.to_string())?;
+            }
+            "daily" => {
+                let next = resolve_postpone_time(minutes, at, None)?;
+                let until = parse_stored(&next).ok_or("自定义时间无效")?;
+                let minutes_until = (until - moment).num_minutes().max(1);
+                snooze_item(conn, item_id, minutes_until)?;
+            }
+            _ => return Err("这类条目不能推迟截止时间".into()),
+        }
+    } else if let Some(sub_id) = reminder.subproject_id {
+        let sub = get_subproject(conn, sub_id)?;
+        let current = sub.due_at.as_deref().and_then(parse_stored);
+        let next = resolve_postpone_time(minutes, at, current)?;
+        set_subproject_due(conn, sub_id, Some(&next))?;
+        let until = parse_stored(&next).unwrap_or(moment);
+        snooze_subproject(conn, sub_id, ((until - moment).num_minutes()).max(1))?;
+    } else {
+        return Err("这条提醒没有可推迟的截止时间".into());
+    }
+    conn.execute(
+        "INSERT INTO activity_logs (created_at, raw_text, matched_item_id, incoming_item_id, incoming_class, verdict, reason, accepted, snooze_min, match_source)
+         VALUES (?1, '推迟截止时间', NULL, ?2, ?3, 'continue', '把截止或跟进时间往后挪了。', 1, 0, 'rules')",
+        params![timeutil::now_iso(), reminder.item_id, class_name(reminder.class)],
+    )
+    .map_err(|err| err.to_string())?;
+    clear_reminder(conn)?;
+    Ok(())
+}
+
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     conn.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |row| row.get(0))
         .optional()
@@ -1459,6 +1601,34 @@ fn insert_sub(
         "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, stall_snooze_until, created_at, updated_at, sort_order)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
         params![project_id, name, criteria, target_date, status, touched, snooze, stamp, sort_order],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn insert_periodic(
+    conn: &Connection,
+    project_id: i64,
+    name: &str,
+    repeat_days: &str,
+    window_start: Option<&str>,
+    window_end: Option<&str>,
+    grace_min: Option<i64>,
+    interrupt: i64,
+    stamp: &str,
+) -> Result<i64, String> {
+    let sort_order = next_sub_sort_order(conn, project_id)?;
+    conn.execute(
+        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
+         VALUES (?1, ?2, '', NULL, 'active', ?3, ?3, ?3, 'periodic', '', NULL, ?4)",
+        params![project_id, name, stamp, sort_order],
+    )
+    .map_err(|err| err.to_string())?;
+    let sub_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO items (kind, title, notes, project_id, subproject_id, status, repeat_days, window_start, window_end, grace_min, interrupt_after_grace, created_at, updated_at)
+         VALUES ('daily', ?1, '', ?2, ?3, 'open', ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+        params![name, project_id, sub_id, repeat_days, window_start, window_end, grace_min, interrupt, stamp],
     )
     .map_err(|err| err.to_string())?;
     Ok(conn.last_insert_rowid())
@@ -1589,11 +1759,13 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         Some(launch), Some(homepage), Some(1), None, Some(90), "open",
         None, None, None, None, 0, None, None, None, None, None, &stamp,
     )?;
-    insert_item(
+    let chore_id = insert_item(
         &tx, "task", "核对报名按钮", "不重要，今天到期，只进杂事，不单独弹窗。",
-        Some(launch), Some(tracking), Some(0), Some(&timeutil::iso(chore_due)), Some(15), "open",
+        Some(launch), Some(tracking), Some(0), Some(&timeutil::iso(chore_due)), None, "open",
         None, None, None, None, 0, None, None, None, None, None, &stamp,
     )?;
+    tx.execute("UPDATE items SET urgent = 1 WHERE id = ?1", params![chore_id])
+        .map_err(|err| err.to_string())?;
     insert_item(
         &tx, "task", "收集本周完成的三件事", "子任务已经四天没动，用来触发停滞提醒。",
         Some(team), Some(weekly), Some(1), Some(&timeutil::iso(moment + Duration::days(2))), Some(25), "open",
@@ -1624,10 +1796,9 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         Some(launch), None, None, None, None, "open",
         None, None, None, None, 0, Some("设计组"), Some(&timeutil::iso(moment + Duration::days(1))), None, None, None, &stamp,
     )?;
-    insert_item(&tx, "inbox", "客户说合同还要改一版，不知道归到哪条线", "给收集箱整理用，智能体可以建议挂到合同盖章。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "inbox", "下周三之前把报价发出去", "给收集箱整理用，有时间但还没变成任务。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "inbox", "有空问问设计稿什么时候能看", "可能是等待，也可能只是以后再说。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "someday", "整理去年的项目复盘模板", "以后再说，不占今天的名额。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "inbox", "客户说合同还要改一版，不知道归到哪条线", "给临时任务整理用，智能体可以建议挂到合同盖章。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "inbox", "下周三之前把报价发出去", "给临时任务整理用，有时间但还没变成任务。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "inbox", "有空问问设计稿什么时候能看", "可能是等待跟进。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
 
     let grace_end = clock(-90);
     let grace_start = clock(-120);
@@ -1637,12 +1808,25 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
     let later_end = clock(210);
     let soft_start = clock(-20);
     let soft_end = clock(40);
-    let done_daily = insert_item(&tx, "daily", "晨间记录", "今天这条已经做完。", None, None, None, None, None, "open", Some(every_day), Some("06:30"), Some("07:00"), Some(15), 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "daily", "过宽限后可以打断的检查", "时间窗和宽限都过了，而且允许打断不重要的事。", None, None, None, None, None, "open", Some(every_day), Some(&grace_start), Some(&grace_end), Some(20), 1, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "daily", "过宽限但不打断的阅读", "过了宽限，但不要求切换正在做的重要工作。", None, None, None, None, None, "open", Some(every_day), Some(&quiet_start), Some(&quiet_end), Some(15), 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "daily", "现在这个时间窗里的伸展", "正在时间窗内，只轻提醒。", None, None, None, None, None, "open", Some(every_day), Some(&soft_start), Some(&soft_end), Some(20), 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "daily", "稍晚才开始的复盘", "还没到时间窗。", None, None, None, None, None, "open", Some(every_day), Some(&later_start), Some(&later_end), Some(15), 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "daily", "不是今天的站会", "重复日不包含今天，今天的清单里不应出现。", None, None, None, None, None, "open", Some(&not_today), Some("09:00"), Some("09:20"), Some(10), 1, None, None, None, None, None, &stamp)?;
+    let habits = insert_project(&tx, "日常习惯", "按时间窗出现的周期性义务", "active", &stamp)?;
+    let done_daily = insert_periodic(
+        &tx, habits, "晨间记录", every_day, Some("06:30"), Some("07:00"), Some(15), 0, &stamp,
+    )?;
+    insert_periodic(
+        &tx, habits, "过宽限后可以打断的检查", every_day, Some(&grace_start), Some(&grace_end), Some(20), 1, &stamp,
+    )?;
+    insert_periodic(
+        &tx, habits, "过宽限但不打断的阅读", every_day, Some(&quiet_start), Some(&quiet_end), Some(15), 0, &stamp,
+    )?;
+    insert_periodic(
+        &tx, habits, "现在这个时间窗里的伸展", every_day, Some(&soft_start), Some(&soft_end), Some(20), 0, &stamp,
+    )?;
+    insert_periodic(
+        &tx, habits, "稍晚才开始的复盘", every_day, Some(&later_start), Some(&later_end), Some(15), 0, &stamp,
+    )?;
+    insert_periodic(
+        &tx, habits, "不是今天的站会", &not_today, Some("09:00"), Some("09:20"), Some(10), 1, &stamp,
+    )?;
     tx.execute(
         "INSERT INTO daily_marks (item_id, day, state) VALUES (?1, ?2, 'done')",
         params![done_daily, day],
@@ -1679,14 +1863,22 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
     .map_err(|err| err.to_string())?;
 
     ensure_setting(&tx, "ai_base_url", "https://openrouter.ai/api/v1")?;
-    ensure_setting(&tx, "ai_model", "openai/gpt-6-luna")?;
+    ensure_setting(&tx, "ai_model", "openai/gpt-4o-mini")?;
     tx.execute(
-        "INSERT INTO settings (key, value) VALUES ('demo_seeded', '1')",
+        "INSERT INTO settings (key, value) VALUES ('demo_seeded', '1')
+         ON CONFLICT(key) DO UPDATE SET value = '1'",
         [],
     )
     .map_err(|err| err.to_string())?;
     tx.commit().map_err(|err| err.to_string())?;
     Ok(())
+}
+
+pub fn load_demo(conn: &Connection) -> Result<(), String> {
+    if get_setting(conn, "demo_seeded")?.as_deref() == Some("1") {
+        return Err("已经加载过示例数据".into());
+    }
+    seed_demo(conn)
 }
 
 pub fn load_reminder(conn: &Connection) -> Result<Option<ReminderView>, String> {
@@ -1983,8 +2175,6 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
             let _ = get_project(conn, project_id)?;
             let important = draft.important.ok_or("选一下四象限")?;
             let urgent = draft.urgent.ok_or("选一下四象限")?;
-            let estimate = draft.estimate_min.unwrap_or(25);
-            check_estimate(estimate)?;
             Ok(PreparedDraft {
                 kind: "task".into(),
                 title: title.into(),
@@ -1994,7 +2184,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 important: Some(bool_int(important)),
                 urgent: Some(bool_int(urgent)),
                 due_at: normalize_optional(draft.due_at.as_deref())?,
-                estimate_min: Some(estimate),
+                estimate_min: None,
                 status: "open".into(),
                 repeat_days: None,
                 window_start: None,
@@ -2005,40 +2195,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 follow_up_at: None,
             })
         }
-        "daily" => {
-            let days = draft.repeat_days.clone().unwrap_or_default();
-            if days.trim().is_empty() {
-                return Err("选重复的日子".into());
-            }
-            let start = draft.window_start.clone().unwrap_or_default();
-            let end = draft.window_end.clone().unwrap_or_default();
-            if !timeutil::valid_hhmm(&start) || !timeutil::valid_hhmm(&end) {
-                return Err("时间窗要用 09:00 这种格式".into());
-            }
-            let grace = draft.grace_min.unwrap_or(30);
-            if !(0..=240).contains(&grace) {
-                return Err("宽限要在 0 到 240 分钟之间".into());
-            }
-            Ok(PreparedDraft {
-                kind: "daily".into(),
-                title: title.into(),
-                notes,
-                project_id: None,
-                subproject_id: None,
-                important: None,
-                urgent: None,
-                due_at: None,
-                estimate_min: None,
-                status: "open".into(),
-                repeat_days: Some(days),
-                window_start: Some(start),
-                window_end: Some(end),
-                grace_min: Some(grace),
-                interrupt: bool_int(draft.interrupt_after_grace),
-                waiting_on: None,
-                follow_up_at: None,
-            })
-        }
+        "daily" => Err("日常只能通过项目里的周期性子任务创建".into()),
         "waiting" => {
             let project_id = draft.project_id.ok_or("等待要挂在大项目上")?;
             let _ = get_project(conn, project_id)?;
@@ -2067,25 +2224,7 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 follow_up_at: Some(timeutil::parse_user_time(&follow)?),
             })
         }
-        "someday" => Ok(PreparedDraft {
-            kind: "someday".into(),
-            title: title.into(),
-            notes,
-            project_id: draft.project_id,
-            subproject_id: draft.subproject_id,
-            important: None,
-            urgent: None,
-            due_at: None,
-            estimate_min: None,
-            status: "open".into(),
-            repeat_days: None,
-            window_start: None,
-            window_end: None,
-            grace_min: None,
-            interrupt: 0,
-            waiting_on: None,
-            follow_up_at: None,
-        }),
+        "someday" => Err("以后再说暂未开放".into()),
         _ => Err("类型无效".into()),
     }
 }
@@ -2324,13 +2463,6 @@ fn suggestion_reason(item: &Item, moment: chrono::DateTime<chrono::Local>) -> St
     }
 }
 
-fn check_estimate(minutes: i64) -> Result<(), String> {
-    if matches!(minutes, 15 | 25 | 50 | 90) {
-        Ok(())
-    } else {
-        Err("预估只能是 15、25、50 或 90 分钟".into())
-    }
-}
 
 fn normalize_optional(value: Option<&str>) -> Result<Option<String>, String> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
@@ -2368,7 +2500,6 @@ mod tests {
                     name: format!("项目{index}"),
                     outcome: "结果".into(),
                     status: "active".into(),
-                    pause_project_id: None,
                 },
             )
             .unwrap();
@@ -2388,7 +2519,6 @@ mod tests {
                 name: "客户线".into(),
                 outcome: "这个月交付".into(),
                 status: "active".into(),
-                pause_project_id: None,
             },
         )
         .unwrap();
@@ -2466,7 +2596,6 @@ mod tests {
                 name: "客户线".into(),
                 outcome: "这个月交付".into(),
                 status: "active".into(),
-                pause_project_id: None,
             },
         )
         .unwrap();
@@ -2521,13 +2650,17 @@ mod tests {
         let dailies: i64 = conn.query_row("SELECT COUNT(*) FROM items WHERE kind = 'daily'", [], |row| row.get(0)).unwrap();
         let slots: i64 = conn.query_row("SELECT COUNT(*) FROM today_slots", [], |row| row.get(0)).unwrap();
         let logs: i64 = conn.query_row("SELECT COUNT(*) FROM activity_logs WHERE match_source = 'ai'", [], |row| row.get(0)).unwrap();
-        assert_eq!(active_projects, 3);
-        assert_eq!(active_subs, 5);
+        assert_eq!(active_projects, 4);
+        assert_eq!(active_subs, 11);
         assert_eq!(inbox, 3);
         assert_eq!(waiting, 2);
         assert!(dailies >= 6);
+        let orphan_dailies: i64 = conn
+            .query_row("SELECT COUNT(*) FROM items WHERE kind = 'daily' AND subproject_id IS NULL", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(orphan_dailies, 0);
         assert_eq!(slots, 3);
         assert_eq!(logs, 2);
-        assert_eq!(get_setting(&conn, "ai_model").unwrap().as_deref(), Some("openai/gpt-6-luna"));
+        assert_eq!(get_setting(&conn, "ai_model").unwrap().as_deref(), Some("openai/gpt-4o-mini"));
     }
 }

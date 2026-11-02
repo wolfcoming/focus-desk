@@ -15,6 +15,7 @@ export function Waiting({ revision }: { revision: number }) {
   const [editItem, setEditItem] = useState<Item | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editProjectId, setEditProjectId] = useState("");
+  const [editWaitingOn, setEditWaitingOn] = useState("");
   const [editFollowUp, setEditFollowUp] = useState("");
   const [scriptItem, setScriptItem] = useState<Item | null>(null);
   const [scriptExtra, setScriptExtra] = useState("");
@@ -78,6 +79,7 @@ export function Waiting({ revision }: { revision: number }) {
     setError("");
     setEditItem(item);
     setEditTitle(item.title);
+    setEditWaitingOn(item.waitingOn ?? "");
     setEditFollowUp(toLocalInput(item.followUpAt));
     setEditProjectId(item.projectId ? String(item.projectId) : "");
   }
@@ -235,7 +237,7 @@ export function Waiting({ revision }: { revision: number }) {
                   windowEnd: null,
                   graceMin: null,
                   interruptAfterGrace: false,
-                  waitingOn: target.waitingOn,
+                  waitingOn: editWaitingOn,
                   followUpAt: editFollowUp,
                 });
                 setEditItem(null);
@@ -252,11 +254,14 @@ export function Waiting({ revision }: { revision: number }) {
                 {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
               </select>
             </Field>
+            <Field label="在等什么">
+              <input value={editWaitingOn} onChange={(event) => setEditWaitingOn(event.target.value)} />
+            </Field>
             <DateTimeField label="何时再问" value={editFollowUp} emptyText="未设置，点这里选择" onChange={setEditFollowUp} />
             <ErrorText text={error} />
             <div className="actions">
               <button type="button" className="quiet" onClick={() => setEditItem(null)}>取消</button>
-              <button className="primary" type="submit" disabled={busy || !editFollowUp || !editTitle.trim()}>{busy ? "正在保存…" : "保存"}</button>
+              <button className="primary" type="submit" disabled={busy || !editFollowUp || !editTitle.trim() || !editWaitingOn.trim()}>{busy ? "正在保存…" : "保存"}</button>
             </div>
           </form>
         </Dialog>

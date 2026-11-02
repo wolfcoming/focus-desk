@@ -23,10 +23,10 @@ export function message(error: unknown) {
 
 export const api = {
   listProjects: () => invoke<Project[]>("list_projects"),
-  createProject: (input: { name: string; outcome: string; status: string; pauseProjectId: number | null }) =>
+  createProject: (input: { name: string; outcome: string; status: string }) =>
     invoke<Project>("create_project", { input }),
-  setProjectStatus: (id: number, status: string, pauseProjectId: number | null) =>
-    invoke<Project>("set_project_status", { id, status, pauseProjectId }),
+  setProjectStatus: (id: number, status: string) =>
+    invoke<Project>("set_project_status", { id, status }),
   listSubprojects: (projectId: number | null) => invoke<Subproject[]>("list_subprojects", { projectId }),
   createSubproject: (input: {
     projectId: number;
@@ -86,13 +86,18 @@ export const api = {
   previewJudgment: (text: string) => invoke<Judgment>("preview_judgment", { text }),
   resolveReminder: (text: string, follow: boolean) => invoke<Judgment>("resolve_reminder", { text, follow }),
   acknowledgeReminder: () => invoke<void>("acknowledge_reminder"),
+  openReminderDetail: () =>
+    invoke<{ page: string; projectId: number | null; subprojectId: number | null }>("open_reminder_detail"),
+  postponeReminderDue: (minutes: number | null, at: string | null) =>
+    invoke<void>("postpone_reminder_due", { minutes, at }),
   resolveStall: (action: string) => invoke<void>("resolve_stall", { action }),
   checkReminders: () => invoke<Reminder | null>("check_reminders"),
   testAiConnection: (baseUrl: string | null, model: string | null, apiKey: string | null) =>
     invoke<string>("test_ai_connection", { baseUrl, model, apiKey }),
   clarify: (id: number) => invoke<ClarifyResult>("ai_clarify", { id }),
   morning: () => invoke<MorningResult>("ai_morning"),
-  weeklyAssist: () => invoke<{ source: string; summary: string }>("ai_weekly"),
+  weeklyAssist: () => invoke<{ source: string; summary: string; thinking?: string | null }>("ai_weekly"),
   followUpLines: (id: number, extra: string | null) =>
     invoke<{ scripts: string[]; thinking: string | null }>("ai_follow_up_lines", { id, extra }),
+  loadDemo: () => invoke<void>("load_demo"),
 };

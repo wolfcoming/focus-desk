@@ -10,9 +10,10 @@ import { Today } from "./Today";
 import type { Limits, Project } from "./types";
 import { projectStatus } from "./types";
 import { Waiting } from "./Waiting";
+import { Weekly } from "./Weekly";
 import { Chevron, ErrorText } from "./widgets";
 
-type Page = "today" | "inbox" | "projects" | "waiting" | "progress" | "settings";
+type Page = "today" | "inbox" | "projects" | "waiting" | "progress" | "weekly" | "settings";
 
 const pages: { id: Page; label: string }[] = [
   { id: "today", label: "今天" },
@@ -20,6 +21,7 @@ const pages: { id: Page; label: string }[] = [
   { id: "projects", label: "项目" },
   { id: "waiting", label: "等待" },
   { id: "progress", label: "进度" },
+  { id: "weekly", label: "周回顾" },
   { id: "settings", label: "设置" },
 ];
 
@@ -33,6 +35,7 @@ function Shell() {
   const [projectRows, setProjectRows] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectTick, setProjectTick] = useState(0);
+  const [focusSubId, setFocusSubId] = useState<number | null>(null);
   const [createProject, setCreateProject] = useState(false);
   const [deleteProject, setDeleteProject] = useState<Project | null>(null);
 
@@ -42,15 +45,33 @@ function Shell() {
   }, [revision]);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenChanged: (() => void) | undefined;
+    let unlistenOpen: (() => void) | undefined;
     const refresh = () => setRevision((value) => value + 1);
     window.addEventListener("desk-changed", refresh);
     void listen("desk://changed", refresh).then((fn) => {
-      unlisten = fn;
+      unlistenChanged = fn;
+    });
+    void listen<{ page: string; projectId: number | null; subprojectId: number | null }>("desk://open", (event) => {
+      const target = event.payload;
+      if (target.page === "waiting") {
+        setPage("waiting");
+        setFocusSubId(null);
+        return;
+      }
+      if (target.projectId == null) return;
+      setProjectsOpen(true);
+      setPage("projects");
+      setFocusSubId(target.subprojectId);
+      setProjectId(target.projectId);
+      setProjectTick((value) => value + 1);
+    }).then((fn) => {
+      unlistenOpen = fn;
     });
     return () => {
       window.removeEventListener("desk-changed", refresh);
-      unlisten?.();
+      unlistenChanged?.();
+      unlistenOpen?.();
     };
   }, []);
 
@@ -72,7 +93,7 @@ function Shell() {
       <aside className="rail">
         <div className="brand">
           <strong>Little Fun</strong>
-          <span>今天只盯三件</span>
+          <span>今日三件 · 日常到点</span>
         </div>
         <nav className="nav">
           {pages.map((item) => item.id === "projects" ? (
@@ -81,7 +102,7 @@ function Shell() {
                 <button type="button" className="chevron-btn" aria-expanded={projectsOpen} aria-label={projectsOpen ? "收起项目" : "展开项目"} onClick={() => setProjectsOpen((open) => !open)}>
                   <Chevron open={projectsOpen} />
                 </button>
-                <button type="button" className={page === "projects" && projectId == null ? "active" : ""} onClick={() => { setProjectsOpen(true); setPage("projects"); setProjectId(null); }}>
+                <button type="button" className={page === "projects" && projectId == null ? "active" : ""} onClick={() => { setProjectsOpen(true); setPage("projects"); setProjectId(null); setFocusSubId(null); }}>
                   项目
                 </button>
               </div>
@@ -92,7 +113,7 @@ function Shell() {
                       <button
                         type="button"
                         className={page === "projects" && projectId === project.id ? "tree-project active" : "tree-project"}
-                        onClick={() => { setPage("projects"); setProjectId(project.id); setProjectTick((value) => value + 1); }}
+                        onClick={() => { setFocusSubId(null); setPage("projects"); setProjectId(project.id); setProjectTick((value) => value + 1); }}
                       >
                         <span className="tree-name">{project.name}</span>
                         <span className="meta">{projectStatus[project.status] ?? project.status}</span>
@@ -111,9 +132,9 @@ function Shell() {
           ))}
         </nav>
         <p className="wip">
-          进行中的大项目 {limits?.activeProjects ?? 0}
+          进行中大项目 {limits?.activeProjects ?? 0} / 建议 ≤ {limits?.projectCap ?? 3}
           <br />
-          进行中的子任务 {limits?.activeSubprojects ?? 0}
+          进行中子任务 {limits?.activeSubprojects ?? 0} / 建议 ≤ {limits?.subprojectCap ?? 5}
         </p>
       </aside>
       <main className="main">
@@ -125,7 +146,7 @@ function Shell() {
         {page === "today" && (
           <Today
             revision={revision}
-            onOpen={(id) => { setPage("projects"); setProjectId(id); setProjectTick((value) => value + 1); }}
+            onOpen={(id) => { setFocusSubId(null); setPage("projects"); setProjectId(id); setProjectTick((value) => value + 1); }}
           />
         )}
         {page === "inbox" && <Inbox revision={revision} />}
@@ -134,8 +155,10 @@ function Shell() {
             revision={revision}
             selectedId={projectId}
             projectTick={projectTick}
+            focusSubId={focusSubId}
+            onFocusedSub={() => setFocusSubId(null)}
             onAskDelete={setDeleteProject}
-            onSelectProject={(id) => { setProjectId(id); setProjectTick((value) => value + 1); }}
+            onSelectProject={(id) => { setFocusSubId(null); setProjectId(id); setProjectTick((value) => value + 1); }}
           />
         )}
         <ProjectOverlays
@@ -150,7 +173,13 @@ function Shell() {
         {page === "progress" && (
           <Progress
             revision={revision}
-            onOpen={(id) => { setPage("projects"); setProjectId(id); setProjectTick((value) => value + 1); }}
+            onOpen={(id) => { setFocusSubId(null); setPage("projects"); setProjectId(id); setProjectTick((value) => value + 1); }}
+          />
+        )}
+        {page === "weekly" && (
+          <Weekly
+            revision={revision}
+            onOpen={(id) => { setFocusSubId(null); setPage("projects"); setProjectId(id); setProjectTick((value) => value + 1); }}
           />
         )}
         {page === "settings" && <Settings revision={revision} />}

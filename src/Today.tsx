@@ -40,7 +40,7 @@ export function Today({ revision, onOpen }: { revision: number; onOpen: (project
   return (
     <section>
       <h1>今天</h1>
-      <p className="lead">重要和紧急由你标成四象限。截止时间可选。弹窗只在到点、过宽限和停滞时出现。</p>
+      <p className="lead">今日三件是你亲手挑的重点；日常来自项目里的周期性子任务。重要和紧急都由你标四象限。弹窗只在到点、过宽限和停滞时出现。</p>
       <ErrorText text={error} />
       <h2>今日三件</h2>
       {board && board.slots.length === 0 && <Empty text="今天还没有自己选的三件。" />}
@@ -85,7 +85,7 @@ export function Today({ revision, onOpen }: { revision: number; onOpen: (project
                 )}
               </h3>
               <div className="meta">
-                {item.quadrant} · {item.subprojectName} · {item.estimateMin} 分钟
+                {item.quadrant} · {item.subprojectName}
                 {item.status === "doing" ? " · 正在做" : ""}
                 {item.dueAt ? ` · ${when(item.dueAt)}` : ""}
               </div>
@@ -130,7 +130,7 @@ export function Today({ revision, onOpen }: { revision: number; onOpen: (project
       ))}
 
       <h2>今天的日常</h2>
-      {board && board.dailies.length === 0 && <Empty text="今天没有日常义务。" />}
+      {board && board.dailies.length === 0 && <Empty text="今天没有周期性日常。去项目里建「周期性子任务」即可出现。" />}
       <div className="list">
         {board?.dailies.map(({ item, state }) => (
           <article className="row" key={item.id}>

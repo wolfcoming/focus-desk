@@ -76,17 +76,6 @@ export function DayChecks({ value, onChange }: { value: string; onChange: (value
   );
 }
 
-export function EstimateSelect({ value, onChange }: { value: number | null; onChange: (value: number) => void }) {
-  return (
-    <select value={value ?? ""} onChange={(event) => onChange(Number(event.target.value))}>
-      <option value="" disabled>选择时长</option>
-      {[15, 25, 50, 90].map((minutes) => (
-        <option key={minutes} value={minutes}>{minutes} 分钟</option>
-      ))}
-    </select>
-  );
-}
-
 function todayKey() {
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, "0");

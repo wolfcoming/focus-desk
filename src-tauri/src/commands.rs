@@ -83,10 +83,9 @@ pub fn set_project_status(
     state: State<'_, AppData>,
     id: i64,
     status: String,
-    pause_project_id: Option<i64>,
 ) -> Result<db::Project, String> {
     let conn = connection(&state)?;
-    db::set_project_status(&conn, id, &status, pause_project_id)
+    db::set_project_status(&conn, id, &status)
 }
 
 #[tauri::command]
@@ -349,6 +348,46 @@ pub async fn resolve_reminder(app: AppHandle, state: State<'_, AppData>, text: S
     Ok(view)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderTargetView {
+    page: String,
+    project_id: Option<i64>,
+    subproject_id: Option<i64>,
+}
+
+#[tauri::command]
+pub fn open_reminder_detail(app: AppHandle, state: State<'_, AppData>) -> Result<ReminderTargetView, String> {
+    let conn = connection(&state)?;
+    let target = db::reminder_target(&conn)?;
+    drop(conn);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    let view = ReminderTargetView {
+        page: target.page.clone(),
+        project_id: target.project_id,
+        subproject_id: target.subproject_id,
+    };
+    let _ = app.emit("desk://open", &view);
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn postpone_reminder_due(
+    app: AppHandle,
+    state: State<'_, AppData>,
+    minutes: Option<i64>,
+    at: Option<String>,
+) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::postpone_reminder_due(&conn, minutes, at.as_deref())?;
+    let _ = app.emit("desk://changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub fn acknowledge_reminder(app: AppHandle, state: State<'_, AppData>) -> Result<(), String> {
     let conn = connection(&state)?;
@@ -438,6 +477,14 @@ pub async fn ai_weekly(state: State<'_, AppData>) -> Result<ai::WeeklyResult, St
     let config = ai::load_config(&conn)?;
     drop(conn);
     Ok(ai::weekly(config, &packet).await)
+}
+
+#[tauri::command]
+pub fn load_demo(app: AppHandle, state: State<'_, AppData>) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::load_demo(&conn)?;
+    let _ = app.emit("desk://changed", ());
+    Ok(())
 }
 
 async fn judge_reminder(state: &State<'_, AppData>, text: &str) -> Result<(JudgmentView, judge::Judgment), String> {

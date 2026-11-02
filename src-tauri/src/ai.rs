@@ -485,7 +485,6 @@ fn parse_draft(text: &str, item: &Item, projects: &[Project], subs: &[Subproject
     let important = json_bool(&value, &["important"]);
     let urgent = json_bool(&value, &["urgent"]);
     let due_at = nonempty_opt(json_str(&value, &["dueAt", "due_at"]));
-    let estimate_min = json_i64(&value, &["estimateMin", "estimate_min"]).filter(|minutes| matches!(minutes, 15 | 25 | 50 | 90));
     let waiting_on = nonempty_opt(json_str(&value, &["waitingOn", "waiting_on"]));
     let follow_up_at = nonempty_opt(json_str(&value, &["followUpAt", "follow_up_at"]));
     let project_id = json_i64(&value, &["projectId", "project_id"])
@@ -506,12 +505,12 @@ fn parse_draft(text: &str, item: &Item, projects: &[Project], subs: &[Subproject
         important,
         urgent,
         due_at,
-        estimate_min,
-        repeat_days: nonempty_opt(json_str(&value, &["repeatDays", "repeat_days"])),
-        window_start: nonempty_opt(json_str(&value, &["windowStart", "window_start"])),
-        window_end: nonempty_opt(json_str(&value, &["windowEnd", "window_end"])),
-        grace_min: json_i64(&value, &["graceMin", "grace_min"]).or(Some(30)),
-        interrupt_after_grace: json_bool(&value, &["interruptAfterGrace", "interrupt_after_grace"]).unwrap_or(false),
+        estimate_min: None,
+        repeat_days: None,
+        window_start: None,
+        window_end: None,
+        grace_min: None,
+        interrupt_after_grace: false,
         waiting_on,
         follow_up_at,
     })

@@ -12,7 +12,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::MacosLauncher;
 
 use crate::commands::{present, AppData};
 
@@ -26,10 +26,8 @@ pub fn run() {
             let db_path = dir.join("focus-desk.sqlite");
             let conn = db::open(&db_path)?;
             if db::get_setting(&conn, "bootstrapped")?.is_none() {
-                let _ = app.autolaunch().enable();
                 db::set_setting(&conn, "bootstrapped", "1")?;
             }
-            db::seed_demo(&conn)?;
             drop(conn);
 
             let reminder = WebviewWindowBuilder::new(
@@ -158,13 +156,16 @@ pub fn run() {
             commands::preview_judgment,
             commands::resolve_reminder,
             commands::acknowledge_reminder,
+            commands::open_reminder_detail,
+            commands::postpone_reminder_due,
             commands::resolve_stall,
             commands::check_reminders,
             commands::test_ai_connection,
             commands::ai_clarify,
             commands::ai_morning,
             commands::ai_weekly,
-            commands::ai_follow_up_lines
+            commands::ai_follow_up_lines,
+            commands::load_demo
         ])
         .run(tauri::generate_context!())
         .expect("error while running Little Fun");

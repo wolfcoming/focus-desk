@@ -94,10 +94,9 @@ export function ProjectOverlays({
         name: form.name,
         outcome: form.outcome,
         status: form.status,
-        pauseProjectId: null,
       });
       window.dispatchEvent(new Event("desk-changed"));
-      if (over) setCapWarning("进行中的大项目已经超过 3 个。这次已经建立，只是提醒你。");
+      if (over) setCapWarning(`进行中的大项目建议不超过 ${limits?.projectCap ?? 3} 个。这次已经建立，只是软提醒。`);
       onCreated(created);
     } catch (reason) {
       setError(message(reason));
@@ -168,12 +167,16 @@ export function Projects({
   revision,
   selectedId,
   projectTick,
+  focusSubId = null,
+  onFocusedSub,
   onAskDelete,
   onSelectProject,
 }: {
   revision: number;
   selectedId: number | null;
   projectTick: number;
+  focusSubId?: number | null;
+  onFocusedSub?: () => void;
   onAskDelete: (project: Project) => void;
   onSelectProject: (id: number | null) => void;
 }) {
@@ -214,8 +217,16 @@ export function Projects({
   }, [revision, selectedId]);
 
   useEffect(() => {
-    setOpenSubId(null);
-  }, [selectedId, projectTick]);
+    if (focusSubId == null) setOpenSubId(null);
+  }, [selectedId, projectTick, focusSubId]);
+
+  useEffect(() => {
+    if (focusSubId == null) return;
+    const target = subs.find((sub) => sub.id === focusSubId);
+    if (!target) return;
+    openSub(target);
+    onFocusedSub?.();
+  }, [focusSubId, subs]);
 
   useEffect(() => {
     const currentOpen = subs.find((sub) => sub.id === openSubId);
@@ -310,11 +321,11 @@ export function Projects({
             {current.status !== "active" && <button type="button" onClick={() => {
               const over = (limits?.activeProjects ?? 0) >= (limits?.projectCap ?? 3);
               void run(async () => {
-                await api.setProjectStatus(current.id, "active", null);
-                if (over) setCapWarning("进行中的大项目已经超过 3 个。已经恢复，只是提醒你。");
+                await api.setProjectStatus(current.id, "active");
+                if (over) setCapWarning(`进行中的大项目建议不超过 ${limits?.projectCap ?? 3} 个。已经恢复，只是软提醒。`);
               });
             }}>恢复进行</button>}
-            {current.status === "active" && <button type="button" onClick={() => void run(() => api.setProjectStatus(current.id, "paused", null))}>暂停这条线</button>}
+            {current.status === "active" && <button type="button" onClick={() => void run(() => api.setProjectStatus(current.id, "paused"))}>暂停这条线</button>}
             <button type="button" className="quiet tree-delete" onClick={() => onAskDelete(current)}>删除</button>
           </div>
           <ErrorText text={error} />
@@ -692,9 +703,13 @@ export function Projects({
               setSubForm(emptySubForm);
               setCreateSub(false);
               setNotice(`已建立「${name}」`);
-              if (projectOver && subOver) setCapWarning("进行中的大项目已经超过 3 个，子任务也超过 5 个。这次已经建立，只是提醒你。");
-              else if (projectOver) setCapWarning("进行中的大项目已经超过 3 个。这次已经建立，只是提醒你。");
-              else if (subOver) setCapWarning("进行中的子任务已经超过 5 个。这次已经建立，只是提醒你。");
+              if (projectOver && subOver) {
+                setCapWarning(`进行中大项目建议 ≤ ${limits?.projectCap ?? 3}，子任务建议 ≤ ${limits?.subprojectCap ?? 5}。这次已经建立，只是软提醒。`);
+              } else if (projectOver) {
+                setCapWarning(`进行中的大项目建议不超过 ${limits?.projectCap ?? 3} 个。这次已经建立，只是软提醒。`);
+              } else if (subOver) {
+                setCapWarning(`进行中的子任务建议不超过 ${limits?.subprojectCap ?? 5} 个。这次已经建立，只是软提醒。`);
+              }
             });
           }}>
             <div className="choice" role="group" aria-label="子任务类型">
