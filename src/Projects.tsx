@@ -8,6 +8,7 @@ const emptyProjectForm = { name: "", outcome: "", status: "active" };
 const emptySubForm = {
   kind: "regular",
   name: "",
+  description: "",
   quadrant: "iu",
   progress: "doing",
   dueAt: "",
@@ -192,6 +193,7 @@ export function Projects({
   const [openSubId, setOpenSubId] = useState<number | null>(null);
   const [progressForm, setProgressForm] = useState({ progress: "doing", progressPercent: "", log: "" });
   const [nameDraft, setNameDraft] = useState("");
+  const [descriptionDraft, setDescriptionDraft] = useState("");
   const [remindDraft, setRemindDraft] = useState({ enabled: false, time: "09:00" });
   const [updateDraft, setUpdateDraft] = useState("");
   const [editingLogId, setEditingLogId] = useState<number | null>(null);
@@ -230,7 +232,10 @@ export function Projects({
 
   useEffect(() => {
     const currentOpen = subs.find((sub) => sub.id === openSubId);
-    if (currentOpen) setNameDraft(currentOpen.name);
+    if (currentOpen) {
+      setNameDraft(currentOpen.name);
+      setDescriptionDraft(currentOpen.description ?? "");
+    }
     if (currentOpen?.kind === "periodic") {
       setRemindDraft({ enabled: currentOpen.remindAt != null, time: currentOpen.remindAt ?? "09:00" });
     }
@@ -266,6 +271,7 @@ export function Projects({
     setError("");
     setOpenSubId(sub.id);
     setNameDraft(sub.name);
+    setDescriptionDraft(sub.description ?? "");
     setRemindDraft({ enabled: sub.remindAt != null, time: sub.remindAt ?? "09:00" });
     setUpdateDraft("");
     setEditingLogId(null);
@@ -389,6 +395,7 @@ export function Projects({
           <button type="button" className="back" onClick={() => setOpenSubId(null)}>返回 {current.name}</button>
           <h1>{opened.name}</h1>
           <p className="lead">{subMeta(opened)}</p>
+          {opened.description.trim() && <p className="note">{opened.description}</p>}
           <div className="facts">
             <span>上次触碰 {when(opened.lastTouchedAt)}</span>
             {opened.nextTitle && <span>下一步 {opened.nextTitle}</span>}
@@ -411,21 +418,39 @@ export function Projects({
             onSubmit={(event) => {
               event.preventDefault();
               const target = opened;
-              const next = nameDraft.trim();
-              if (!next || next === target.name) return;
+              const nextName = nameDraft.trim();
+              const nextDescription = descriptionDraft.trim();
+              if (!nextName) return;
+              if (nextName === target.name && nextDescription === (target.description ?? "").trim()) return;
               void run(async () => {
-                await api.renameSubproject(target.id, next);
-                setNotice(`已改名为「${next}」`);
+                await api.updateSubproject(target.id, nextName, nextDescription);
+                setNotice(nextName === target.name ? "已更新任务描述" : `已保存「${nextName}」`);
               });
             }}
           >
-            <h2>名称</h2>
+            <h2>基本信息</h2>
             <Field label="子任务名称">
               <input value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} />
             </Field>
+            <Field label="任务描述">
+              <textarea
+                rows={3}
+                value={descriptionDraft}
+                placeholder="补充说明、验收要点或背景，可空"
+                onChange={(event) => setDescriptionDraft(event.target.value)}
+              />
+            </Field>
             <div className="actions" style={{ justifyContent: "flex-start" }}>
-              <button className="primary" type="submit" disabled={busy || !nameDraft.trim() || nameDraft.trim() === opened.name}>
-                {busy ? "正在保存…" : "保存名称"}
+              <button
+                className="primary"
+                type="submit"
+                disabled={
+                  busy
+                  || !nameDraft.trim()
+                  || (nameDraft.trim() === opened.name && descriptionDraft.trim() === (opened.description ?? "").trim())
+                }
+              >
+                {busy ? "正在保存…" : "保存"}
               </button>
             </div>
           </form>
@@ -691,6 +716,7 @@ export function Projects({
                 projectId: current.id,
                 kind: subForm.kind,
                 name: subForm.name,
+                description: subForm.description,
                 important: quadrant?.important ?? true,
                 urgent: quadrant?.urgent ?? false,
                 progress: subForm.kind === "regular" ? subForm.progress : "",
@@ -719,6 +745,14 @@ export function Projects({
             {subForm.kind === "regular" ? (
               <>
                 <Field label="名称"><input autoFocus value={subForm.name} onChange={(event) => setSubForm({ ...subForm, name: event.target.value })} /></Field>
+                <Field label="任务描述">
+                  <textarea
+                    rows={3}
+                    value={subForm.description}
+                    placeholder="补充说明、验收要点或背景，可空"
+                    onChange={(event) => setSubForm({ ...subForm, description: event.target.value })}
+                  />
+                </Field>
                 <Field label="四象限">
                   <select value={subForm.quadrant} onChange={(event) => setSubForm({ ...subForm, quadrant: event.target.value })}>
                     {QUADRANT_OPTIONS.map((option) => (
@@ -755,6 +789,14 @@ export function Projects({
             ) : (
               <>
                 <Field label="标题"><input autoFocus value={subForm.name} onChange={(event) => setSubForm({ ...subForm, name: event.target.value })} /></Field>
+                <Field label="任务描述">
+                  <textarea
+                    rows={3}
+                    value={subForm.description}
+                    placeholder="补充说明，可空"
+                    onChange={(event) => setSubForm({ ...subForm, description: event.target.value })}
+                  />
+                </Field>
                 <Field label="重复日期"><DayChecks value={subForm.repeatDays} onChange={(repeatDays) => setSubForm({ ...subForm, repeatDays })} /></Field>
                 <label className="check-line">
                   <span>定时提醒</span>

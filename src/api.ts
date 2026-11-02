@@ -32,6 +32,7 @@ export const api = {
     projectId: number;
     kind: string;
     name: string;
+    description: string;
     important: boolean;
     urgent: boolean;
     progress: string;
@@ -51,6 +52,8 @@ export const api = {
     invoke<Subproject>("set_subproject_quadrant", { id, important, urgent }),
   renameSubproject: (id: number, name: string) =>
     invoke<Subproject>("rename_subproject", { id, name }),
+  updateSubproject: (id: number, name: string, description: string) =>
+    invoke<Subproject>("update_subproject", { id, name, description }),
   reorderSubprojects: (projectId: number, orderedIds: number[]) =>
     invoke<void>("reorder_subprojects", { projectId, orderedIds }),
   listWorkLogs: (projectId: number | null) => invoke<WorkLog[]>("list_work_logs", { projectId }),

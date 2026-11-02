@@ -28,7 +28,7 @@ pub struct Subproject {
     pub project_id: i64,
     pub project_name: String,
     pub name: String,
-    pub done_criteria: String,
+    pub description: String,
     pub target_date: Option<String>,
     pub status: String,
     pub last_touched_at: String,
@@ -183,6 +183,7 @@ pub struct NewSubproject {
     pub project_id: i64,
     pub kind: String,
     pub name: String,
+    pub description: String,
     pub important: bool,
     pub urgent: bool,
     pub progress: String,
@@ -207,6 +208,7 @@ CREATE TABLE IF NOT EXISTS subprojects (
   project_id INTEGER NOT NULL REFERENCES projects(id),
   name TEXT NOT NULL,
   done_criteria TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
   target_date TEXT,
   status TEXT NOT NULL CHECK (status IN ('active','paused','done','archived')),
   last_touched_at TEXT NOT NULL,
@@ -317,6 +319,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     ensure_column(conn, "subprojects", "kind", "TEXT NOT NULL DEFAULT 'regular'")?;
     ensure_column(conn, "subprojects", "progress", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "subprojects", "progress_percent", "INTEGER")?;
+    ensure_column(conn, "subprojects", "description", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "items", "urgent", "INTEGER NOT NULL DEFAULT 0")?;
     if ensure_column(conn, "subprojects", "sort_order", "INTEGER NOT NULL DEFAULT 0")? {
         backfill_subproject_sort_orders(conn)?;
@@ -385,7 +388,7 @@ fn next_sub_sort_order(conn: &Connection, project_id: i64) -> Result<i64, String
 }
 
 const SUB_FROM: &str = "
-SELECT s.id, s.project_id, p.name, s.name, s.done_criteria, s.target_date, s.status, s.last_touched_at,
+SELECT s.id, s.project_id, p.name, s.name, COALESCE(s.description, ''), s.target_date, s.status, s.last_touched_at,
        (SELECT i.title FROM items i WHERE i.subproject_id = s.id AND i.kind = 'task' AND i.status IN ('open','doing') ORDER BY CASE i.status WHEN 'doing' THEN 0 ELSE 1 END, i.id LIMIT 1),
        COALESCE(s.kind, 'regular'),
        COALESCE(s.progress, ''),
@@ -525,11 +528,12 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
     } else {
         None
     };
+    let description = input.description.trim().to_string();
     let sort_order = next_sub_sort_order(&tx, input.project_id)?;
     tx.execute(
-        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
-         VALUES (?1, ?2, '', ?3, ?4, ?5, ?5, ?5, ?6, ?7, ?8, ?9)",
-        params![input.project_id, name, due, status, stamp, kind, progress, progress_percent, sort_order],
+        "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10)",
+        params![input.project_id, name, description, due, status, stamp, kind, progress, progress_percent, sort_order],
     )
     .map_err(|err| err.to_string())?;
     let sub_id = tx.last_insert_rowid();
@@ -547,8 +551,8 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
         };
         tx.execute(
             "INSERT INTO items (kind, title, notes, project_id, subproject_id, status, repeat_days, window_start, window_end, grace_min, interrupt_after_grace, created_at, updated_at)
-             VALUES ('daily', ?1, '', ?2, ?3, 'open', ?4, ?5, ?6, ?7, 0, ?8, ?8)",
-            params![name, input.project_id, sub_id, repeat, window_start, window_end, grace, stamp],
+             VALUES ('daily', ?1, ?2, ?3, ?4, 'open', ?5, ?6, ?7, ?8, 0, ?9, ?9)",
+            params![name, description, input.project_id, sub_id, repeat, window_start, window_end, grace, stamp],
         )
         .map_err(|err| err.to_string())?;
     } else {
@@ -556,9 +560,10 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
         let completed = if progress == "done" { Some(stamp.as_str()) } else { None };
         tx.execute(
             "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, status, interrupt_after_grace, created_at, updated_at, completed_at)
-             VALUES ('task', ?1, '', ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8, ?9)",
+             VALUES ('task', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9, ?10)",
             params![
                 name,
+                description,
                 input.project_id,
                 sub_id,
                 bool_int(input.important),
@@ -646,10 +651,16 @@ pub fn set_subproject_status(
 }
 
 pub fn rename_subproject(conn: &Connection, id: i64, name: &str) -> Result<Subproject, String> {
+    let current = get_subproject(conn, id)?;
+    update_subproject(conn, id, name, &current.description)
+}
+
+pub fn update_subproject(conn: &Connection, id: i64, name: &str, description: &str) -> Result<Subproject, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("子任务需要一个名称".into());
     }
+    let description = description.trim().to_string();
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
     let (old_name, kind): (String, String) = tx
         .query_row(
@@ -661,8 +672,8 @@ pub fn rename_subproject(conn: &Connection, id: i64, name: &str) -> Result<Subpr
     let stamp = timeutil::now_iso();
     let changed = tx
         .execute(
-            "UPDATE subprojects SET name = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, name, stamp],
+            "UPDATE subprojects SET name = ?2, description = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, name, description, stamp],
         )
         .map_err(|err| err.to_string())?;
     if changed != 1 {
@@ -671,21 +682,21 @@ pub fn rename_subproject(conn: &Connection, id: i64, name: &str) -> Result<Subpr
     let item_kind = if kind == "periodic" { "daily" } else { "task" };
     let renamed = tx
         .execute(
-            "UPDATE items SET title = ?3, updated_at = ?4
-             WHERE subproject_id = ?1 AND kind = ?2 AND title = ?5",
-            params![id, item_kind, name, stamp, old_name],
+            "UPDATE items SET title = ?3, notes = ?4, updated_at = ?5
+             WHERE subproject_id = ?1 AND kind = ?2 AND title = ?6",
+            params![id, item_kind, name, description, stamp, old_name],
         )
         .map_err(|err| err.to_string())?;
     if renamed == 0 {
         tx.execute(
-            "UPDATE items SET title = ?3, updated_at = ?4
+            "UPDATE items SET title = ?3, notes = ?4, updated_at = ?5
              WHERE id = (
                SELECT id FROM items
                WHERE subproject_id = ?1 AND kind = ?2 AND status IN ('open','doing')
                ORDER BY CASE status WHEN 'doing' THEN 0 ELSE 1 END, id
                LIMIT 1
              )",
-            params![id, item_kind, name, stamp],
+            params![id, item_kind, name, description, stamp],
         )
         .map_err(|err| err.to_string())?;
     }
@@ -1100,9 +1111,9 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
         }
         let sort_order = next_sub_sort_order(&tx, project_id)?;
         tx.execute(
-            "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
-             VALUES (?1, ?2, '', ?3, 'active', ?4, ?4, ?4, 'regular', 'doing', NULL, ?5)",
-            params![project_id, prepared.title, prepared.due_at, stamp, sort_order],
+            "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5, ?5, 'regular', 'doing', NULL, ?6)",
+            params![project_id, prepared.title, prepared.notes, prepared.due_at, stamp, sort_order],
         )
         .map_err(|err| err.to_string())?;
         prepared.subproject_id = Some(tx.last_insert_rowid());
@@ -1589,7 +1600,7 @@ fn insert_sub(
     conn: &Connection,
     project_id: i64,
     name: &str,
-    criteria: &str,
+    description: &str,
     target_date: Option<&str>,
     status: &str,
     touched: &str,
@@ -1598,9 +1609,9 @@ fn insert_sub(
 ) -> Result<i64, String> {
     let sort_order = next_sub_sort_order(conn, project_id)?;
     conn.execute(
-        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, stall_snooze_until, created_at, updated_at, sort_order)
+        "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, stall_snooze_until, created_at, updated_at, sort_order)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
-        params![project_id, name, criteria, target_date, status, touched, snooze, stamp, sort_order],
+        params![project_id, name, description, target_date, status, touched, snooze, stamp, sort_order],
     )
     .map_err(|err| err.to_string())?;
     Ok(conn.last_insert_rowid())
@@ -1619,7 +1630,7 @@ fn insert_periodic(
 ) -> Result<i64, String> {
     let sort_order = next_sub_sort_order(conn, project_id)?;
     conn.execute(
-        "INSERT INTO subprojects (project_id, name, done_criteria, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
+        "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
          VALUES (?1, ?2, '', NULL, 'active', ?3, ?3, ?3, 'periodic', '', NULL, ?4)",
         params![project_id, name, stamp, sort_order],
     )
@@ -2310,7 +2321,7 @@ fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
         project_id: row.get(1)?,
         project_name: row.get(2)?,
         name: row.get(3)?,
-        done_criteria: row.get(4)?,
+        description: row.get(4)?,
         target_date: row.get(5)?,
         status: row.get(6)?,
         last_touched_at: row.get(7)?,
@@ -2528,6 +2539,7 @@ mod tests {
                 project_id: project.id,
                 kind: "regular".into(),
                 name: "报价".into(),
+                description: "把第三版报价改完".into(),
                 important: true,
                 urgent: true,
                 progress: "doing".into(),
@@ -2540,10 +2552,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sub.next_title.as_deref(), Some("报价"));
+        assert_eq!(sub.description, "把第三版报价改完");
         assert_eq!(sub.progress, "doing");
         assert_eq!(sub.progress_percent, Some(40));
         assert_eq!(sub.kind, "regular");
         assert_eq!(sub.quadrant.as_deref(), Some("重要且紧急"));
+        let described = update_subproject(&conn, sub.id, "报价", "客户书面确认后发出").unwrap();
+        assert_eq!(described.description, "客户书面确认后发出");
         let dated = set_subproject_due(&conn, sub.id, Some("2099-12-31T18:00")).unwrap();
         assert!(dated.due_at.as_deref().unwrap_or("").starts_with("2099-12-31T18:00"));
         let cleared = set_subproject_due(&conn, sub.id, None).unwrap();
@@ -2571,6 +2586,7 @@ mod tests {
                 project_id: project.id,
                 kind: "periodic".into(),
                 name: "晨间记录".into(),
+                description: String::new(),
                 important: false,
                 urgent: false,
                 progress: String::new(),
@@ -2605,6 +2621,7 @@ mod tests {
                 project_id: project.id,
                 kind: "regular".into(),
                 name: "报价".into(),
+                description: String::new(),
                 important: true,
                 urgent: false,
                 progress: "doing".into(),

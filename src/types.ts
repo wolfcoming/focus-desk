@@ -12,7 +12,7 @@ export type Subproject = {
   projectId: number;
   projectName: string;
   name: string;
-  doneCriteria: string;
+  description: string;
   targetDate: string | null;
   status: string;
   lastTouchedAt: string;

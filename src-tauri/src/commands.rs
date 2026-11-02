@@ -155,6 +155,17 @@ pub fn rename_subproject(
 }
 
 #[tauri::command]
+pub fn update_subproject(
+    state: State<'_, AppData>,
+    id: i64,
+    name: String,
+    description: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::update_subproject(&conn, id, &name, &description)
+}
+
+#[tauri::command]
 pub fn reorder_subprojects(
     state: State<'_, AppData>,
     project_id: i64,

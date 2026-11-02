@@ -131,6 +131,7 @@ pub fn run() {
             commands::set_subproject_reminder,
             commands::set_subproject_quadrant,
             commands::rename_subproject,
+            commands::update_subproject,
             commands::reorder_subprojects,
             commands::list_work_logs,
             commands::add_work_log,
