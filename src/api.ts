@@ -10,6 +10,7 @@ import type {
   SettingsView,
   Subproject,
   TodayBoard,
+  IdeaTag,
   WorkLog,
   WeeklyPacket,
 } from "./types";
@@ -63,6 +64,14 @@ export const api = {
   updateWorkLog: (id: number, body: string) =>
     invoke<WorkLog>("update_work_log", { id, body }),
   deleteWorkLog: (id: number) => invoke<void>("delete_work_log", { id }),
+  listIdeaTags: (subprojectId: number) => invoke<IdeaTag[]>("list_idea_tags", { subprojectId }),
+  addIdeaTag: (subprojectId: number, body: string, color: string, posX: number, posY: number) =>
+    invoke<IdeaTag>("add_idea_tag", { subprojectId, body, color, posX, posY }),
+  updateIdeaTag: (id: number, body: string, color: string) =>
+    invoke<IdeaTag>("update_idea_tag", { id, body, color }),
+  moveIdeaTag: (id: number, posX: number, posY: number) =>
+    invoke<IdeaTag>("move_idea_tag", { id, posX, posY }),
+  deleteIdeaTag: (id: number) => invoke<void>("delete_idea_tag", { id }),
   setSubprojectStatus: (id: number, status: string, pauseSubprojectId: number | null) =>
     invoke<Subproject>("set_subproject_status", { id, status, pauseSubprojectId }),
   deleteProject: (id: number) => invoke<void>("delete_project", { id }),

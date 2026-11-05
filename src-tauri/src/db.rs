@@ -56,6 +56,20 @@ pub struct WorkLog {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IdeaTag {
+    pub id: i64,
+    pub subproject_id: i64,
+    pub body: String,
+    pub color: String,
+    pub sort_order: i64,
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub z_index: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Item {
     pub id: i64,
     pub kind: String,
@@ -272,6 +286,17 @@ CREATE TABLE IF NOT EXISTS work_logs (
   kind TEXT NOT NULL DEFAULT 'key',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS idea_tags (
+  id INTEGER PRIMARY KEY,
+  subproject_id INTEGER NOT NULL REFERENCES subprojects(id),
+  body TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT 'soft',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  pos_x REAL NOT NULL DEFAULT 20,
+  pos_y REAL NOT NULL DEFAULT 20,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -334,6 +359,23 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     .map_err(|err| err.to_string())?;
     // key=关键进展流；work=调整进度时的工作日志
     ensure_column(conn, "work_logs", "kind", "TEXT NOT NULL DEFAULT 'key'")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS idea_tags (
+           id INTEGER PRIMARY KEY,
+           subproject_id INTEGER NOT NULL REFERENCES subprojects(id),
+           body TEXT NOT NULL,
+           color TEXT NOT NULL DEFAULT 'soft',
+           sort_order INTEGER NOT NULL DEFAULT 0,
+           pos_x REAL NOT NULL DEFAULT 20,
+           pos_y REAL NOT NULL DEFAULT 20,
+           z_index INTEGER NOT NULL DEFAULT 0,
+           created_at TEXT NOT NULL
+         );",
+    )
+    .map_err(|err| err.to_string())?;
+    ensure_column(conn, "idea_tags", "pos_x", "REAL NOT NULL DEFAULT 20")?;
+    ensure_column(conn, "idea_tags", "pos_y", "REAL NOT NULL DEFAULT 20")?;
+    ensure_column(conn, "idea_tags", "z_index", "INTEGER NOT NULL DEFAULT 0")?;
     Ok(())
 }
 
@@ -857,6 +899,168 @@ pub fn delete_work_log(conn: &Connection, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_idea_color(color: &str) -> String {
+    match color.trim() {
+        "amber" | "mint" | "rose" | "soft" => color.trim().into(),
+        _ => "soft".into(),
+    }
+}
+
+fn clamp_idea_pos(value: f64) -> f64 {
+    if value.is_nan() {
+        return 20.0;
+    }
+    value.clamp(2.0, 98.0)
+}
+
+fn map_idea_tag(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdeaTag> {
+    Ok(IdeaTag {
+        id: row.get(0)?,
+        subproject_id: row.get(1)?,
+        body: row.get(2)?,
+        color: row.get(3)?,
+        sort_order: row.get(4)?,
+        pos_x: row.get(5)?,
+        pos_y: row.get(6)?,
+        z_index: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+fn get_idea_tag(conn: &Connection, id: i64) -> Result<IdeaTag, String> {
+    conn.query_row(
+        "SELECT id, subproject_id, body, color, sort_order,
+                COALESCE(pos_x, 20), COALESCE(pos_y, 20), COALESCE(z_index, 0), created_at
+         FROM idea_tags WHERE id = ?1",
+        params![id],
+        map_idea_tag,
+    )
+    .map_err(|_| "找不到这张灵感标签".into())
+}
+
+fn next_idea_z(conn: &Connection, subproject_id: i64) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(z_index), 0) + 1 FROM idea_tags WHERE subproject_id = ?1",
+        params![subproject_id],
+        |row| row.get(0),
+    )
+    .map_err(|err| err.to_string())
+}
+
+pub fn list_idea_tags(conn: &Connection, subproject_id: i64) -> Result<Vec<IdeaTag>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, subproject_id, body, color, sort_order,
+                    COALESCE(pos_x, 20), COALESCE(pos_y, 20), COALESCE(z_index, 0), created_at
+             FROM idea_tags WHERE subproject_id = ?1
+             ORDER BY z_index ASC, id ASC",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map(params![subproject_id], map_idea_tag)
+        .map_err(|err| err.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())
+}
+
+pub fn add_idea_tag(
+    conn: &Connection,
+    subproject_id: i64,
+    body: &str,
+    color: &str,
+    pos_x: f64,
+    pos_y: f64,
+) -> Result<IdeaTag, String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err("写一下灵感内容".into());
+    }
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM subprojects WHERE id = ?1",
+            params![subproject_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    if exists != 1 {
+        return Err("找不到这个子任务".into());
+    }
+    let color = normalize_idea_color(color);
+    let sort_order: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM idea_tags WHERE subproject_id = ?1",
+            params![subproject_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    let z_index = next_idea_z(conn, subproject_id)?;
+    let stamp = timeutil::now_iso();
+    conn.execute(
+        "INSERT INTO idea_tags (subproject_id, body, color, sort_order, pos_x, pos_y, z_index, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            subproject_id,
+            body,
+            color,
+            sort_order,
+            clamp_idea_pos(pos_x),
+            clamp_idea_pos(pos_y),
+            z_index,
+            stamp
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    get_idea_tag(conn, conn.last_insert_rowid())
+}
+
+pub fn update_idea_tag(conn: &Connection, id: i64, body: &str, color: &str) -> Result<IdeaTag, String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err("写一下灵感内容".into());
+    }
+    let color = normalize_idea_color(color);
+    let changed = conn
+        .execute(
+            "UPDATE idea_tags SET body = ?2, color = ?3 WHERE id = ?1",
+            params![id, body, color],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这张灵感标签".into());
+    }
+    get_idea_tag(conn, id)
+}
+
+pub fn move_idea_tag(conn: &Connection, id: i64, pos_x: f64, pos_y: f64) -> Result<IdeaTag, String> {
+    let subproject_id: i64 = conn
+        .query_row(
+            "SELECT subproject_id FROM idea_tags WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "找不到这张灵感标签".to_string())?;
+    let z_index = next_idea_z(conn, subproject_id)?;
+    let changed = conn
+        .execute(
+            "UPDATE idea_tags SET pos_x = ?2, pos_y = ?3, z_index = ?4 WHERE id = ?1",
+            params![id, clamp_idea_pos(pos_x), clamp_idea_pos(pos_y), z_index],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这张灵感标签".into());
+    }
+    get_idea_tag(conn, id)
+}
+
+pub fn delete_idea_tag(conn: &Connection, id: i64) -> Result<(), String> {
+    let changed = conn
+        .execute("DELETE FROM idea_tags WHERE id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这张灵感标签".into());
+    }
+    Ok(())
+}
+
 fn get_work_log(conn: &Connection, id: i64) -> Result<WorkLog, String> {
     conn.query_row(
         "SELECT id, subproject_id, body, progress, progress_percent, COALESCE(kind, 'key'), created_at
@@ -1195,6 +1399,8 @@ pub fn delete_subproject(conn: &Connection, id: i64) -> Result<(), String> {
     purge_items(&tx, "SELECT id FROM items WHERE subproject_id = ?1", id)?;
     tx.execute("DELETE FROM work_logs WHERE subproject_id = ?1", params![id])
         .map_err(|err| err.to_string())?;
+    tx.execute("DELETE FROM idea_tags WHERE subproject_id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
     tx.execute("DELETE FROM reminder_state WHERE subproject_id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     tx.execute("DELETE FROM subprojects WHERE id = ?1", params![id])
@@ -1223,6 +1429,11 @@ pub fn delete_project(conn: &Connection, id: i64) -> Result<(), String> {
     .map_err(|err| err.to_string())?;
     tx.execute(
         "DELETE FROM work_logs WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    tx.execute(
+        "DELETE FROM idea_tags WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
         params![id],
     )
     .map_err(|err| err.to_string())?;

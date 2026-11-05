@@ -1,9 +1,20 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
+﻿import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { api, message } from "./api";
 import { ProjectBlocked } from "./ProjectBlocked";
-import type { Item, Project, Subproject, WorkLog } from "./types";
-import { parseQuadrant, quadrantValue, QUADRANT_OPTIONS, subStatus } from "./types";
+import type { IdeaTag, Item, Project, Subproject, WorkLog } from "./types";
+import { IDEA_TAG_COLORS, parseQuadrant, quadrantValue, QUADRANT_OPTIONS, subStatus } from "./types";
 import { Chevron, DateTimeField, DayChecks, Dialog, Empty, ErrorText, Field, PercentSlider, TimeField, when } from "./widgets";
+
+function ideaBoardPercent(board: HTMLElement, clientX: number, clientY: number) {
+  const rect = board.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return { x: 20, y: 20 };
+  const x = ((clientX - rect.left) / rect.width) * 100;
+  const y = ((clientY - rect.top) / rect.height) * 100;
+  return {
+    x: Math.min(98, Math.max(2, x)),
+    y: Math.min(98, Math.max(2, y)),
+  };
+}
 
 const emptyProjectForm = { name: "", outcome: "" };
 const emptySubForm = {
@@ -167,6 +178,7 @@ export function Projects({
   const [subs, setSubs] = useState<Subproject[]>([]);
   const [logs, setLogs] = useState<WorkLog[]>([]);
   const [todos, setTodos] = useState<Item[]>([]);
+  const [ideaTags, setIdeaTags] = useState<IdeaTag[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [createSub, setCreateSub] = useState(false);
@@ -186,6 +198,24 @@ export function Projects({
   const [doneOpen, setDoneOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [keyProgressOpen, setKeyProgressOpen] = useState(false);
+  const [ideaOpen, setIdeaOpen] = useState(false);
+  const [ideaDraft, setIdeaDraft] = useState({ body: "", color: "soft" });
+  const [editingIdeaId, setEditingIdeaId] = useState<number | null>(null);
+  const [subTodoTitle, setSubTodoTitle] = useState("");
+  const [placingIdea, setPlacingIdea] = useState<{ body: string; color: string } | null>(null);
+  const [placingPos, setPlacingPos] = useState({ x: 50, y: 40 });
+  const [draggingIdeaId, setDraggingIdeaId] = useState<number | null>(null);
+  const ideaBoardRef = useRef<HTMLDivElement | null>(null);
+  const ideaDragRef = useRef<{
+    id: number;
+    originX: number;
+    originY: number;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  } | null>(null);
+  const ideaTagsRef = useRef(ideaTags);
+  ideaTagsRef.current = ideaTags;
   const [editingInfo, setEditingInfo] = useState(false);
 
   async function load() {
@@ -269,6 +299,12 @@ export function Projects({
     setError("");
     setOpenSubId(sub.id);
     setLogsOpen(false);
+    setIdeaOpen(false);
+    setEditingIdeaId(null);
+    setPlacingIdea(null);
+    setDraggingIdeaId(null);
+    ideaDragRef.current = null;
+    setSubTodoTitle("");
     setEditingInfo(false);
     syncInfoDrafts(sub);
     setUpdateDraft("");
@@ -299,7 +335,123 @@ export function Projects({
   useEffect(() => {
     setDoneOpen(false);
     setLogsOpen(false);
+    setIdeaOpen(false);
+    setEditingIdeaId(null);
+    setPlacingIdea(null);
+    setDraggingIdeaId(null);
+    ideaDragRef.current = null;
   }, [selectedId]);
+
+  useEffect(() => {
+    if (openSubId == null) {
+      setIdeaTags([]);
+      setPlacingIdea(null);
+      setDraggingIdeaId(null);
+      ideaDragRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    void api.listIdeaTags(openSubId)
+      .then((tags) => {
+        if (!cancelled) setIdeaTags(tags);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(message(reason));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openSubId]);
+
+  useEffect(() => {
+    if (!placingIdea) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPlacingIdea(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [placingIdea]);
+
+  function beginIdeaDrag(tag: IdeaTag, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (placingIdea || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    ideaDragRef.current = {
+      id: tag.id,
+      originX: tag.posX,
+      originY: tag.posY,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    setDraggingIdeaId(tag.id);
+    const onMove = (moveEvent: PointerEvent) => {
+      const drag = ideaDragRef.current;
+      const board = ideaBoardRef.current;
+      if (!drag || !board) return;
+      if (!drag.moved) {
+        const dx = Math.abs(moveEvent.clientX - drag.startClientX);
+        const dy = Math.abs(moveEvent.clientY - drag.startClientY);
+        if (dx > 4 || dy > 4) drag.moved = true;
+      }
+      const point = ideaBoardPercent(board, moveEvent.clientX, moveEvent.clientY);
+      setIdeaTags((tags) => tags.map((item) => (
+        item.id === drag.id ? { ...item, posX: point.x, posY: point.y } : item
+      )));
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const drag = ideaDragRef.current;
+      const board = ideaBoardRef.current;
+      ideaDragRef.current = null;
+      setDraggingIdeaId(null);
+      if (!drag || !board) return;
+      if (!drag.moved) {
+        const tag = ideaTagsRef.current.find((item) => item.id === drag.id);
+        if (tag) {
+          setEditingIdeaId(tag.id);
+          setIdeaDraft({ body: tag.body, color: tag.color });
+          setIdeaOpen(true);
+        }
+        return;
+      }
+      const point = ideaBoardPercent(board, upEvent.clientX, upEvent.clientY);
+      void api.moveIdeaTag(drag.id, point.x, point.y)
+        .then((next) => {
+          setIdeaTags((tags) => tags.map((item) => (item.id === next.id ? next : item)));
+        })
+        .catch((reason) => {
+          setError(message(reason));
+          setIdeaTags((tags) => tags.map((item) => (
+            item.id === drag.id ? { ...item, posX: drag.originX, posY: drag.originY } : item
+          )));
+        });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  async function placeIdeaAt(clientX: number, clientY: number) {
+    if (!placingIdea || openSubId == null || busy) return;
+    const board = ideaBoardRef.current;
+    if (!board) return;
+    const point = ideaBoardPercent(board, clientX, clientY);
+    const draft = placingIdea;
+    setBusy(true);
+    try {
+      const created = await api.addIdeaTag(openSubId, draft.body, draft.color, point.x, point.y);
+      setIdeaTags((tags) => [...tags, created]);
+      setPlacingIdea(null);
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const mine = current ? subs.filter((sub) => sub.projectId === current.id) : [];
   const opened = mine.find((sub) => sub.id === openSubId) ?? null;
@@ -832,9 +984,122 @@ export function Projects({
 
           <section className="project-section">
             <div className="section-head">
+              <h2>灵感标签板</h2>
+              <span className="section-count">{ideaTags.length}</span>
+              <button
+                type="button"
+                className="quiet section-edit"
+                disabled={placingIdea != null}
+                onClick={() => {
+                  setEditingIdeaId(null);
+                  setIdeaDraft({ body: "", color: "soft" });
+                  setIdeaOpen(true);
+                }}
+              >
+                添加
+              </button>
+            </div>
+            <p className="note idea-board-hint">
+              {placingIdea
+                ? "便签会跟着鼠标，在板上点一下放下。按 Esc 取消。"
+                : ideaTags.length === 0
+                  ? "写好内容后选颜色，便签会跟鼠标；点板上放下。之后可拖动，叠在一起也没关系。"
+                  : "拖动便签可换位置；点一下可编辑。"}
+            </p>
+            <div
+              ref={ideaBoardRef}
+              className={`idea-board${placingIdea ? " placing" : ""}${draggingIdeaId != null ? " dragging" : ""}`}
+              onPointerMove={(event) => {
+                if (!placingIdea) return;
+                const board = ideaBoardRef.current;
+                if (!board) return;
+                setPlacingPos(ideaBoardPercent(board, event.clientX, event.clientY));
+              }}
+              onPointerDown={(event) => {
+                if (!placingIdea || event.button !== 0) return;
+                if ((event.target as HTMLElement).closest(".idea-card")) return;
+                event.preventDefault();
+                void placeIdeaAt(event.clientX, event.clientY);
+              }}
+            >
+              {ideaTags.length === 0 && !placingIdea && (
+                <div className="idea-board-empty">点右上角「添加」贴一张灵感</div>
+              )}
+              {ideaTags.map((tag) => (
+                <button
+                  type="button"
+                  key={tag.id}
+                  className={`idea-card idea-color-${tag.color}${draggingIdeaId === tag.id ? " dragging" : ""}`}
+                  style={{
+                    left: `${tag.posX}%`,
+                    top: `${tag.posY}%`,
+                    zIndex: draggingIdeaId === tag.id ? 999 : Math.max(1, tag.zIndex),
+                  }}
+                  title={when(tag.createdAt)}
+                  onPointerDown={(event) => beginIdeaDrag(tag, event)}
+                >
+                  <span className="idea-card-body">{tag.body}</span>
+                  <span className="idea-card-time">{when(tag.createdAt)}</span>
+                </button>
+              ))}
+              {placingIdea && (
+                <div
+                  className={`idea-card idea-color-${placingIdea.color} ghost`}
+                  style={{ left: `${placingPos.x}%`, top: `${placingPos.y}%`, zIndex: 1000 }}
+                >
+                  <span className="idea-card-body">{placingIdea.body}</span>
+                  <span className="idea-card-time">点击放下</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="project-section">
+            <div className="section-head">
               <h2>待办</h2>
               <span className="section-count">{subTodos.length}</span>
             </div>
+            <form
+              className="todo-compose sub-todo-compose"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const nextTitle = subTodoTitle.trim();
+                if (!nextTitle || !opened || !current) return;
+                void run(async () => {
+                  await api.saveItem({
+                    kind: "todo",
+                    title: nextTitle,
+                    notes: "",
+                    projectId: current.id,
+                    subprojectId: opened.id,
+                    important: null,
+                    urgent: null,
+                    dueAt: null,
+                    estimateMin: null,
+                    repeatDays: null,
+                    windowStart: null,
+                    windowEnd: null,
+                    graceMin: null,
+                    interruptAfterGrace: false,
+                    waitingOn: null,
+                    followUpAt: null,
+                  });
+                  setSubTodoTitle("");
+                });
+              }}
+            >
+              <div className="todo-compose-main">
+                <input
+                  value={subTodoTitle}
+                  placeholder="给这条子任务加一条待办"
+                  onChange={(event) => setSubTodoTitle(event.target.value)}
+                  aria-label="子任务待办标题"
+                />
+                <button className="primary" type="submit" disabled={busy || !subTodoTitle.trim()}>
+                  添加
+                </button>
+              </div>
+            </form>
             {renderTodoList(subTodos, "还没有挂在这条子任务上的待办。")}
           </section>
 
@@ -855,6 +1120,100 @@ export function Projects({
               <div className="actions">
                 <button type="button" className="primary" onClick={() => setLogsOpen(false)}>关闭</button>
               </div>
+            </Dialog>
+          )}
+
+          {ideaOpen && (
+            <Dialog
+              title={editingIdeaId == null ? "添加灵感标签" : "编辑灵感标签"}
+              onClose={() => {
+                setIdeaOpen(false);
+                setEditingIdeaId(null);
+                setIdeaDraft({ body: "", color: "soft" });
+              }}
+            >
+              <form
+                className="stack"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const body = ideaDraft.body.trim();
+                  if (!body) return;
+                  if (editingIdeaId == null) {
+                    setIdeaOpen(false);
+                    setPlacingIdea({ body, color: ideaDraft.color });
+                    setPlacingPos({ x: 50, y: 40 });
+                    setIdeaDraft({ body: "", color: "soft" });
+                    return;
+                  }
+                  void run(async () => {
+                    await api.updateIdeaTag(editingIdeaId, body, ideaDraft.color);
+                    setIdeaTags(await api.listIdeaTags(opened.id));
+                    setIdeaOpen(false);
+                    setEditingIdeaId(null);
+                    setIdeaDraft({ body: "", color: "soft" });
+                  });
+                }}
+              >
+                <Field label="灵感">
+                  <textarea
+                    rows={4}
+                    autoFocus
+                    placeholder="突然想到的一句、一个方向、一个提醒"
+                    value={ideaDraft.body}
+                    onChange={(event) => setIdeaDraft({ ...ideaDraft, body: event.target.value })}
+                  />
+                </Field>
+                <Field label="颜色">
+                  <div className="idea-color-picks" role="group" aria-label="标签颜色">
+                    {IDEA_TAG_COLORS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`idea-color-pick idea-color-${option.value}${ideaDraft.color === option.value ? " selected" : ""}`}
+                        aria-pressed={ideaDraft.color === option.value}
+                        onClick={() => setIdeaDraft({ ...ideaDraft, color: option.value })}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+                <div className="actions">
+                  <button className="primary" type="submit" disabled={busy || !ideaDraft.body.trim()}>
+                    {busy ? "正在保存…" : editingIdeaId == null ? "选色并放置" : "保存"}
+                  </button>
+                  {editingIdeaId != null && (
+                    <button
+                      type="button"
+                      className="quiet tree-delete"
+                      disabled={busy}
+                      onClick={() => {
+                        const id = editingIdeaId;
+                        void run(async () => {
+                          await api.deleteIdeaTag(id);
+                          setIdeaTags(await api.listIdeaTags(opened.id));
+                          setIdeaOpen(false);
+                          setEditingIdeaId(null);
+                          setIdeaDraft({ body: "", color: "soft" });
+                        });
+                      }}
+                    >
+                      删除
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="quiet"
+                    onClick={() => {
+                      setIdeaOpen(false);
+                      setEditingIdeaId(null);
+                      setIdeaDraft({ body: "", color: "soft" });
+                    }}
+                  >
+                    取消
+                  </button>
+                </div>
+              </form>
             </Dialog>
           )}
 

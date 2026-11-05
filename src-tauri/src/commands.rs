@@ -218,6 +218,53 @@ pub fn delete_work_log(state: State<'_, AppData>, id: i64) -> Result<(), String>
 }
 
 #[tauri::command]
+pub fn list_idea_tags(state: State<'_, AppData>, subproject_id: i64) -> Result<Vec<db::IdeaTag>, String> {
+    let conn = connection(&state)?;
+    db::list_idea_tags(&conn, subproject_id)
+}
+
+#[tauri::command]
+pub fn add_idea_tag(
+    state: State<'_, AppData>,
+    subproject_id: i64,
+    body: String,
+    color: String,
+    pos_x: f64,
+    pos_y: f64,
+) -> Result<db::IdeaTag, String> {
+    let conn = connection(&state)?;
+    db::add_idea_tag(&conn, subproject_id, &body, &color, pos_x, pos_y)
+}
+
+#[tauri::command]
+pub fn update_idea_tag(
+    state: State<'_, AppData>,
+    id: i64,
+    body: String,
+    color: String,
+) -> Result<db::IdeaTag, String> {
+    let conn = connection(&state)?;
+    db::update_idea_tag(&conn, id, &body, &color)
+}
+
+#[tauri::command]
+pub fn move_idea_tag(
+    state: State<'_, AppData>,
+    id: i64,
+    pos_x: f64,
+    pos_y: f64,
+) -> Result<db::IdeaTag, String> {
+    let conn = connection(&state)?;
+    db::move_idea_tag(&conn, id, pos_x, pos_y)
+}
+
+#[tauri::command]
+pub fn delete_idea_tag(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::delete_idea_tag(&conn, id)
+}
+
+#[tauri::command]
 pub fn set_subproject_status(
     state: State<'_, AppData>,
     id: i64,

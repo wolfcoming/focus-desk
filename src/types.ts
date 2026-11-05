@@ -40,6 +40,26 @@ export type WorkLog = {
   createdAt: string;
 };
 
+export type IdeaTag = {
+  id: number;
+  subprojectId: number;
+  body: string;
+  color: string;
+  sortOrder: number;
+  /** 标签板内位置，百分比 0–100，以便签中心为准 */
+  posX: number;
+  posY: number;
+  zIndex: number;
+  createdAt: string;
+};
+
+export const IDEA_TAG_COLORS = [
+  { value: "soft", label: "雾蓝" },
+  { value: "amber", label: "暖杏" },
+  { value: "mint", label: "薄荷" },
+  { value: "rose", label: "浅玫" },
+] as const;
+
 export type Item = {
   id: number;
   kind: string;
