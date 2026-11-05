@@ -4,7 +4,6 @@ import type {
   Item,
   ItemDraft,
   Judgment,
-  Limits,
   MorningResult,
   Project,
   Reminder,
@@ -46,6 +45,8 @@ export const api = {
     invoke<Subproject>("set_subproject_progress", { id, progress, progressPercent, log }),
   setSubprojectDue: (id: number, dueAt: string | null) =>
     invoke<Subproject>("set_subproject_due", { id, dueAt }),
+  setSubprojectRepeat: (id: number, repeatDays: string) =>
+    invoke<Subproject>("set_subproject_repeat", { id, repeatDays }),
   setSubprojectReminder: (id: number, remind: boolean, remindAt: string | null) =>
     invoke<Subproject>("set_subproject_reminder", { id, remind, remindAt }),
   setSubprojectQuadrant: (id: number, important: boolean, urgent: boolean) =>
@@ -70,12 +71,12 @@ export const api = {
   saveItem: (draft: ItemDraft) => invoke<Item>("save_item", { draft }),
   listItems: (kind: string | null) => invoke<Item[]>("list_items", { kind }),
   completeItem: (id: number) => invoke<Item>("complete_item", { id }),
+  setTodoDone: (id: number, done: boolean) => invoke<Item>("set_todo_done", { id, done }),
   dropItem: (id: number) => invoke<void>("drop_item", { id }),
   startItem: (id: number) => invoke<Item>("start_item", { id }),
   setToday: (ids: number[]) => invoke<void>("set_today", { ids }),
   today: () => invoke<TodayBoard>("today_board"),
   weekly: () => invoke<WeeklyPacket>("weekly_packet"),
-  limits: () => invoke<Limits>("limits"),
   bumpFollowUp: (id: number, days: number) => invoke<Item>("bump_follow_up", { id, days }),
   settings: () => invoke<SettingsView>("get_settings"),
   saveSettings: (input: {

@@ -35,6 +35,8 @@ export type WorkLog = {
   body: string;
   progress: string;
   progressPercent: number | null;
+  /** work=调整进度时的工作日志；key=关键进展 */
+  kind: string;
   createdAt: string;
 };
 
@@ -106,6 +108,8 @@ export type Suggested = { item: Item; reason: string };
 export type TodayBoard = {
   day: string;
   slots: Item[];
+  completedCount: number;
+  todos: Item[];
   dailies: DailyView[];
   chores: Item[];
   suggestions: Suggested[];
@@ -117,13 +121,6 @@ export type WeeklyPacket = {
   followUps: Item[];
   undatedImportant: Item[];
   overrides: { createdAt: string; rawText: string; reason: string; verdict: string }[];
-};
-
-export type Limits = {
-  activeProjects: number;
-  activeSubprojects: number;
-  projectCap: number;
-  subprojectCap: number;
 };
 
 export type Reminder = {

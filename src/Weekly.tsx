@@ -43,7 +43,7 @@ export function Weekly({ revision, onOpen }: { revision: number; onOpen: (projec
   return (
     <section>
       <h1>周回顾</h1>
-      <p className="lead">看一眼本周还堆着什么：临时任务、停滞子任务、到点等待，以及重要但没日期的事。</p>
+      <p className="lead">看一眼本周还堆着什么：未挂靠待办、停滞子任务、到点阻塞，以及重要但没日期的事。</p>
       <ErrorText text={error} />
       <div className="actions" style={{ justifyContent: "flex-start", marginBottom: 12 }}>
         <button type="button" className="primary" disabled={busy} onClick={() => void assist()}>
@@ -59,8 +59,8 @@ export function Weekly({ revision, onOpen }: { revision: number; onOpen: (projec
         </div>
       )}
 
-      <h2>临时任务</h2>
-      {packet && packet.inbox.length === 0 && <Empty text="临时任务是空的。" />}
+      <h2>未挂靠的待办</h2>
+      {packet && packet.inbox.length === 0 && <Empty text="没有未挂靠的待办。" />}
       <div className="list">
         {packet?.inbox.map((item) => (
           <article className="row" key={item.id}>
@@ -86,14 +86,22 @@ export function Weekly({ revision, onOpen }: { revision: number; onOpen: (projec
         ))}
       </div>
 
-      <h2>到点的等待</h2>
-      {packet && packet.followUps.length === 0 && <Empty text="没有到点的等待。" />}
+      <h2>到点的阻塞</h2>
+      {packet && packet.followUps.length === 0 && <Empty text="没有到点的阻塞项。" />}
       <div className="list">
         {packet?.followUps.map((item) => (
           <article className="row" key={item.id}>
             <div>
-              <h3>{item.title}</h3>
-              <div className="meta">在等 {item.waitingOn} · {when(item.followUpAt)}</div>
+              <h3>
+                {item.projectId ? (
+                  <button type="button" className="title-button" onClick={() => onOpen(item.projectId as number)}>
+                    {item.title}
+                  </button>
+                ) : (
+                  item.title
+                )}
+              </h3>
+              <div className="meta">在等 {item.waitingOn} · {item.projectName ?? "未挂项目"} · {when(item.followUpAt)}</div>
             </div>
           </article>
         ))}

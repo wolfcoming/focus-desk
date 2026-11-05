@@ -141,7 +141,7 @@ fn classify_item(
                 Ok(None)
             }
         }
-        "waiting" => {
+        "waiting" | "todo" => {
             let Some(follow) = item.follow_up_at.as_deref().and_then(parse_stored) else {
                 return Ok(None);
             };
@@ -198,8 +198,9 @@ fn item_detail(item: &Item, class: InterruptClass) -> String {
             None => "这件重要，而且已经到了该动手的时间。".into(),
         },
         InterruptClass::Today if item.kind == "waiting" => {
-            format!("跟进时间到了。在等：{}", item.waiting_on.as_deref().unwrap_or("外部回复"))
+            format!("阻塞跟进时间到了。在等：{}", item.waiting_on.as_deref().unwrap_or("外部回复"))
         }
+        InterruptClass::Today if item.kind == "todo" => "到了这条待办的提醒时间。".into(),
         InterruptClass::Today => match item.due_at.as_deref().and_then(parse_stored) {
             Some(due) => format!("这件重要，截止是 {}，还没到最后半小时。", timeutil::format_short(due)),
             None => "这件今天要处理。".into(),

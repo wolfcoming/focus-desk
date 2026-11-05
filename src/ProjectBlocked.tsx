@@ -1,20 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, message } from "./api";
-import type { Item, Project } from "./types";
+import type { Item } from "./types";
 import { AiBusy, AiThinking, DateTimeField, Dialog, Empty, ErrorText, Field, toLocalInput, when } from "./widgets";
 
-const emptyForm = { title: "", projectId: "", waitingOn: "", followUpAt: "" };
+const emptyForm = { title: "", waitingOn: "", followUpAt: "" };
 
-export function Waiting({ revision }: { revision: number }) {
+export function ProjectBlocked({
+  projectId,
+  revision,
+}: {
+  projectId: number;
+  revision: number;
+}) {
   const [items, setItems] = useState<Item[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editItem, setEditItem] = useState<Item | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [editProjectId, setEditProjectId] = useState("");
   const [editWaitingOn, setEditWaitingOn] = useState("");
   const [editFollowUp, setEditFollowUp] = useState("");
   const [scriptItem, setScriptItem] = useState<Item | null>(null);
@@ -25,19 +29,23 @@ export function Waiting({ revision }: { revision: number }) {
   const [copied, setCopied] = useState<number | null>(null);
 
   async function load() {
-    const [waiting, projectList] = await Promise.all([api.listItems("waiting"), api.listProjects()]);
-    setItems(waiting.filter((item) => item.status === "open"));
-    setProjects(projectList.filter((project) => project.status !== "archived"));
+    const waiting = await api.listItems("waiting");
+    setItems(waiting.filter((item) => item.status === "open" && item.projectId === projectId));
   }
 
   useEffect(() => {
     void load().catch((reason) => setError(message(reason)));
-  }, [revision]);
+  }, [revision, projectId]);
 
-  function openCreate() {
-    setForm(emptyForm);
-    setError("");
-    setOpen(true);
+  async function run(action: () => Promise<unknown>) {
+    try {
+      await action();
+      await load();
+      window.dispatchEvent(new Event("desk-changed"));
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    }
   }
 
   async function create(event: FormEvent) {
@@ -49,7 +57,7 @@ export function Waiting({ revision }: { revision: number }) {
         kind: "waiting",
         title: form.title,
         notes: "",
-        projectId: form.projectId ? Number(form.projectId) : null,
+        projectId,
         subprojectId: null,
         important: null,
         urgent: null,
@@ -73,24 +81,6 @@ export function Waiting({ revision }: { revision: number }) {
     } finally {
       setBusy(false);
     }
-  }
-
-  function openEdit(item: Item) {
-    setError("");
-    setEditItem(item);
-    setEditTitle(item.title);
-    setEditWaitingOn(item.waitingOn ?? "");
-    setEditFollowUp(toLocalInput(item.followUpAt));
-    setEditProjectId(item.projectId ? String(item.projectId) : "");
-  }
-
-  function openScripts(item: Item) {
-    setError("");
-    setScriptItem(item);
-    setScriptExtra("");
-    setScripts([]);
-    setScriptThinking(null);
-    setCopied(null);
   }
 
   async function generateScripts() {
@@ -118,55 +108,75 @@ export function Waiting({ revision }: { revision: number }) {
     }
   }
 
-  async function run(action: () => Promise<unknown>) {
-    try {
-      await action();
-      await load();
-      window.dispatchEvent(new Event("desk-changed"));
-      setError("");
-    } catch (reason) {
-      setError(message(reason));
-    }
-  }
-
   return (
-    <section>
-      <h1>等待</h1>
-      <p className="lead">卡在别人或外部条件上的事，到了询问时间会提醒你跟进。</p>
-      <ErrorText text={!open && !editItem && !scriptItem ? error : ""} />
-      {items.length === 0 && <Empty text="还没有等待中的事。" />}
-      <div className="list">
-        {items.map((item) => (
-          <article className="row" key={item.id}>
-            <div>
-              <h3>
-                <button type="button" className="title-button" onClick={() => openEdit(item)}>
-                  {item.title}
-                </button>
-              </h3>
-              <div className="meta">在等 {item.waitingOn} · {item.projectName ?? "未挂项目"} · {when(item.followUpAt)}</div>
-            </div>
-            <div className="actions">
-              <button type="button" onClick={() => openEdit(item)}>修改</button>
-              <button type="button" onClick={() => void run(() => api.bumpFollowUp(item.id, 1))}>明天再问</button>
-              <button type="button" onClick={() => openScripts(item)}>问询话术</button>
-              <button type="button" onClick={() => void run(() => api.completeItem(item.id))}>结束</button>
-            </div>
-          </article>
-        ))}
-        <button type="button" className="add-row" onClick={openCreate}>新建等待</button>
+    <section className="project-section">
+      <div className="section-head">
+        <h2>阻塞项</h2>
+        <span className="section-count">{items.length}</span>
       </div>
+      <ErrorText text={!open && !editItem && !scriptItem ? error : ""} />
+      {items.length === 0 ? (
+        <Empty text="还没有阻塞项。" />
+      ) : (
+        <div className="list">
+          {items.map((item) => (
+            <article className="row" key={item.id}>
+              <div>
+                <h3>
+                  <button
+                    type="button"
+                    className="title-button"
+                    onClick={() => {
+                      setError("");
+                      setEditItem(item);
+                      setEditTitle(item.title);
+                      setEditWaitingOn(item.waitingOn ?? "");
+                      setEditFollowUp(toLocalInput(item.followUpAt));
+                    }}
+                  >
+                    {item.title}
+                  </button>
+                </h3>
+                <div className="meta">在等 {item.waitingOn} · {when(item.followUpAt)}</div>
+              </div>
+              <div className="actions row-tools">
+                <button type="button" className="quiet" onClick={() => void run(() => api.bumpFollowUp(item.id, 1))}>明天再问</button>
+                <button
+                  type="button"
+                  className="quiet"
+                  onClick={() => {
+                    setError("");
+                    setScriptItem(item);
+                    setScriptExtra("");
+                    setScripts([]);
+                    setScriptThinking(null);
+                    setCopied(null);
+                  }}
+                >
+                  话术
+                </button>
+                <button type="button" onClick={() => void run(() => api.completeItem(item.id))}>结束</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        className="add-inline"
+        onClick={() => {
+          setForm(emptyForm);
+          setError("");
+          setOpen(true);
+        }}
+      >
+        新建阻塞项
+      </button>
+
       {open && (
-        <Dialog title="新建等待" onClose={() => setOpen(false)}>
+        <Dialog title="新建阻塞项" onClose={() => setOpen(false)}>
           <form className="stack" onSubmit={(event) => void create(event)}>
             <Field label="标题"><input autoFocus value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
-            <Field label="大项目">
-              <select value={form.projectId} onChange={(event) => setForm({ ...form, projectId: event.target.value })}>
-                <option value="">选择</option>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-            </Field>
-            {projects.length === 0 && <p className="note">先在左侧项目里建立一条大项目，等待要挂在它上面。</p>}
             <Field label="在等什么"><input value={form.waitingOn} onChange={(event) => setForm({ ...form, waitingOn: event.target.value })} /></Field>
             <DateTimeField label="何时再问" value={form.followUpAt} emptyText="未设置，点这里选择" onChange={(followUpAt) => setForm({ ...form, followUpAt })} />
             <ErrorText text={error} />
@@ -177,6 +187,7 @@ export function Waiting({ revision }: { revision: number }) {
           </form>
         </Dialog>
       )}
+
       {scriptItem && (
         <Dialog title="问询话术" onClose={() => setScriptItem(null)}>
           <div className="stack">
@@ -213,8 +224,9 @@ export function Waiting({ revision }: { revision: number }) {
           </div>
         </Dialog>
       )}
+
       {editItem && (
-        <Dialog title="修改等待事项" onClose={() => setEditItem(null)}>
+        <Dialog title="修改阻塞项" onClose={() => setEditItem(null)}>
           <form
             className="stack"
             onSubmit={(event) => {
@@ -226,7 +238,7 @@ export function Waiting({ revision }: { revision: number }) {
                   kind: "waiting",
                   title: editTitle.trim(),
                   notes: target.notes,
-                  projectId: editProjectId ? Number(editProjectId) : null,
+                  projectId,
                   subprojectId: null,
                   important: null,
                   urgent: null,
@@ -244,15 +256,8 @@ export function Waiting({ revision }: { revision: number }) {
               });
             }}
           >
-            <p className="note">「{editItem.title}」现在问询时间是 {when(editItem.followUpAt)}。</p>
             <Field label="标题">
               <input autoFocus value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
-            </Field>
-            <Field label="大项目">
-              <select value={editProjectId} onChange={(event) => setEditProjectId(event.target.value)}>
-                <option value="">不挂项目</option>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
             </Field>
             <Field label="在等什么">
               <input value={editWaitingOn} onChange={(event) => setEditWaitingOn(event.target.value)} />
@@ -261,7 +266,9 @@ export function Waiting({ revision }: { revision: number }) {
             <ErrorText text={error} />
             <div className="actions">
               <button type="button" className="quiet" onClick={() => setEditItem(null)}>取消</button>
-              <button className="primary" type="submit" disabled={busy || !editFollowUp || !editTitle.trim() || !editWaitingOn.trim()}>{busy ? "正在保存…" : "保存"}</button>
+              <button className="primary" type="submit" disabled={busy || !editFollowUp || !editTitle.trim() || !editWaitingOn.trim()}>
+                {busy ? "正在保存…" : "保存"}
+              </button>
             </div>
           </form>
         </Dialog>

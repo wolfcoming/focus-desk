@@ -9,6 +9,39 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+/** 0–100 进度滑块，不靠数字输入 */
+export function PercentSlider({
+  value,
+  onChange,
+  label = "进行中进度",
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  label?: string;
+}) {
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  return (
+    <label className="field percent-slider">
+      <span className="percent-slider-head">
+        <span>{label}</span>
+        <span className="percent-slider-value">{clamped}%</span>
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={clamped}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={clamped}
+        aria-valuetext={`${clamped}%`}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
 export function ErrorText({ text }: { text: string }) {
   if (!text) return null;
   return <p className="error">{text}</p>;
@@ -311,5 +344,256 @@ export function AiThinking({ text }: { text?: string | null }) {
       <summary>思考过程</summary>
       <pre>{text.trim()}</pre>
     </details>
+  );
+}
+
+function formatLocalIso(date: Date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function weekdayShort(date: Date) {
+  return ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
+}
+
+function atDay(daysAhead: number, hour: number, minute = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysAhead);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+
+function laterToday(hour = 20) {
+  const now = new Date();
+  const later = new Date(now);
+  later.setHours(hour, 0, 0, 0);
+  if (later <= now) {
+    later.setHours(now.getHours() + 1, 0, 0, 0);
+  }
+  return later;
+}
+
+function nextMonday(hour = 9) {
+  const date = new Date();
+  const day = date.getDay();
+  const delta = day === 0 ? 1 : day === 1 ? 7 : 8 - day;
+  date.setDate(date.getDate() + delta);
+  date.setHours(hour, 0, 0, 0);
+  return date;
+}
+
+function presetHint(date: Date, withWeekday = false) {
+  const time = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  if (!withWeekday) return time;
+  return `周${weekdayShort(date)}, ${time}`;
+}
+
+type ScheduleMenu = "due" | "remind" | null;
+
+export function TodoScheduleBar({
+  dueAt,
+  remindAt,
+  onDueChange,
+  onRemindChange,
+}: {
+  dueAt: string | null;
+  remindAt: string | null;
+  onDueChange: (value: string | null) => void;
+  onRemindChange: (value: string | null) => void;
+}) {
+  const [menu, setMenu] = useState<ScheduleMenu>(null);
+  const [custom, setCustom] = useState<ScheduleMenu>(null);
+  const [draftDate, setDraftDate] = useState(todayKey());
+  const [draftTime, setDraftTime] = useState("18:00");
+  const [viewMonth, setViewMonth] = useState(() => todayKey().slice(0, 7));
+
+  const later = laterToday();
+  const tomorrow = atDay(1, 9);
+  const nextWeek = nextMonday();
+  const dueToday = atDay(0, 18);
+  const dueTomorrow = atDay(1, 18);
+  const dueNextWeek = nextMonday(18);
+
+  useEffect(() => {
+    if (!menu && !custom) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setMenu(null);
+      setCustom(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [menu, custom]);
+
+  function openCustom(kind: "due" | "remind") {
+    const current = kind === "due" ? dueAt : remindAt;
+    const next = splitDateTime(current ?? "");
+    setDraftDate(next.date);
+    setDraftTime(next.time);
+    setViewMonth(next.date.slice(0, 7));
+    setMenu(null);
+    setCustom(kind);
+  }
+
+  function applyCustom() {
+    if (!custom || !draftDate) return;
+    const stamp = `${draftDate}T${draftTime || "18:00"}`;
+    if (custom === "due") onDueChange(stamp);
+    else onRemindChange(stamp);
+    setCustom(null);
+  }
+
+  const hour = draftTime.slice(0, 2);
+  const minute = draftTime.slice(3, 5) || "00";
+  const cells = monthCells(viewMonth);
+
+  return (
+    <div className="todo-schedule">
+      <div className="todo-schedule-icons">
+        <div className="todo-schedule-slot">
+          <button
+            type="button"
+            className={dueAt ? "todo-icon-btn active" : "todo-icon-btn"}
+            aria-label="截止日期"
+            aria-expanded={menu === "due"}
+            onClick={() => setMenu((current) => current === "due" ? null : "due")}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+              <path d="M3 10h18M8 3v4M16 3v4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          </button>
+          {menu === "due" && (
+            <div className="todo-pop">
+              <div className="todo-pop-title">截止日期</div>
+              <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueToday)); setMenu(null); }}>
+                <span>今天</span>
+                <span className="meta">{presetHint(dueToday)}</span>
+              </button>
+              <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueTomorrow)); setMenu(null); }}>
+                <span>明天</span>
+                <span className="meta">{presetHint(dueTomorrow, true)}</span>
+              </button>
+              <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueNextWeek)); setMenu(null); }}>
+                <span>下周</span>
+                <span className="meta">{presetHint(dueNextWeek, true)}</span>
+              </button>
+              <div className="todo-pop-divider" />
+              <button type="button" className="todo-pop-item" onClick={() => openCustom("due")}>
+                <span>选择日期和时间</span>
+              </button>
+              {dueAt && (
+                <button type="button" className="todo-pop-item danger" onClick={() => { onDueChange(null); setMenu(null); }}>
+                  <span>清除截止日期</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="todo-schedule-slot">
+          <button
+            type="button"
+            className={remindAt ? "todo-icon-btn active" : "todo-icon-btn"}
+            aria-label="提醒时间"
+            aria-expanded={menu === "remind"}
+            onClick={() => setMenu((current) => current === "remind" ? null : "remind")}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 22a2.2 2.2 0 0 0 2.1-1.5H9.9A2.2 2.2 0 0 0 12 22Z" fill="currentColor" />
+              <path d="M18 16v-5a6 6 0 1 0-12 0v5l-1.8 1.8c-.4.4-.1 1.2.5 1.2h14.6c.6 0 .9-.8.5-1.2Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {menu === "remind" && (
+            <div className="todo-pop">
+              <div className="todo-pop-title">提醒</div>
+              <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(later)); setMenu(null); }}>
+                <span>今日晚些时候</span>
+                <span className="meta">{presetHint(later)}</span>
+              </button>
+              <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(tomorrow)); setMenu(null); }}>
+                <span>明天</span>
+                <span className="meta">{presetHint(tomorrow, true)}</span>
+              </button>
+              <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(nextWeek)); setMenu(null); }}>
+                <span>下周</span>
+                <span className="meta">{presetHint(nextWeek, true)}</span>
+              </button>
+              <div className="todo-pop-divider" />
+              <button type="button" className="todo-pop-item" onClick={() => openCustom("remind")}>
+                <span>选择日期和时间</span>
+              </button>
+              {remindAt && (
+                <button type="button" className="todo-pop-item danger" onClick={() => { onRemindChange(null); setMenu(null); }}>
+                  <span>清除提醒</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {(dueAt || remindAt) && (
+          <div className="todo-schedule-chips">
+            {dueAt && <span className="todo-chip">截止 {when(dueAt)}</span>}
+            {remindAt && <span className="todo-chip">提醒 {when(remindAt)}</span>}
+          </div>
+        )}
+      </div>
+      {menu && (
+        <button type="button" className="todo-pop-scrim" aria-label="关闭菜单" onClick={() => setMenu(null)} />
+      )}
+      {custom && (
+        <div
+          className="modal-backdrop picker-layer"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCustom(null);
+          }}
+        >
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="todo-picker-title" onMouseDown={(event) => event.stopPropagation()}>
+            <h2 id="todo-picker-title">{custom === "due" ? "截止日期" : "提醒时间"}</h2>
+            <div className="stack">
+              <div className="picker-calendar">
+                <div className="picker-calendar-head">
+                  <button type="button" className="quiet" aria-label="上个月" onClick={() => setViewMonth(shiftMonth(viewMonth, -1))}>‹</button>
+                  <span>{viewMonth.slice(0, 4)} 年 {Number(viewMonth.slice(5, 7))} 月</span>
+                  <button type="button" className="quiet" aria-label="下个月" onClick={() => setViewMonth(shiftMonth(viewMonth, 1))}>›</button>
+                </div>
+                <div className="picker-weekdays">
+                  {weekdays.map((day) => <span key={day}>{day}</span>)}
+                </div>
+                <div className="picker-days">
+                  {cells.map((cell, index) =>
+                    cell ? (
+                      <button
+                        type="button"
+                        key={cell}
+                        className={cell === draftDate ? "picker-day selected" : "picker-day"}
+                        onClick={() => setDraftDate(cell)}
+                      >
+                        {Number(cell.slice(-2))}
+                      </button>
+                    ) : (
+                      <span key={`blank-${index}`} className="picker-day blank" />
+                    ),
+                  )}
+                </div>
+              </div>
+              <div className="picker-time">
+                <span>时间</span>
+                <select value={hour} onChange={(event) => setDraftTime(`${event.target.value}:${minute}`)}>
+                  {hours.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+                <span>:</span>
+                <select value={minute} onChange={(event) => setDraftTime(`${hour}:${event.target.value}`)}>
+                  {minutes.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
+              <div className="actions">
+                <button type="button" className="quiet" onClick={() => setCustom(null)}>取消</button>
+                <button type="button" className="primary" onClick={applyCustom}>确定</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

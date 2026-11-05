@@ -123,6 +123,16 @@ pub fn set_subproject_due(
 }
 
 #[tauri::command]
+pub fn set_subproject_repeat(
+    state: State<'_, AppData>,
+    id: i64,
+    repeat_days: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_repeat(&conn, id, &repeat_days)
+}
+
+#[tauri::command]
 pub fn set_subproject_reminder(
     state: State<'_, AppData>,
     id: i64,
@@ -237,9 +247,21 @@ pub fn capture(state: State<'_, AppData>, title: String) -> Result<Item, String>
 }
 
 #[tauri::command]
+pub fn capture_inbox(state: State<'_, AppData>, title: String) -> Result<Item, String> {
+    let conn = connection(&state)?;
+    db::capture_inbox(&conn, &title)
+}
+
+#[tauri::command]
 pub fn save_item(state: State<'_, AppData>, draft: ItemDraft) -> Result<Item, String> {
     let conn = connection(&state)?;
     db::save_item(&conn, &draft)
+}
+
+#[tauri::command]
+pub fn set_todo_done(state: State<'_, AppData>, id: i64, done: bool) -> Result<Item, String> {
+    let conn = connection(&state)?;
+    db::set_todo_done(&conn, id, done)
 }
 
 #[tauri::command]
@@ -282,12 +304,6 @@ pub fn today_board(state: State<'_, AppData>) -> Result<db::TodayBoard, String> 
 pub fn weekly_packet(state: State<'_, AppData>) -> Result<db::WeeklyPacket, String> {
     let conn = connection(&state)?;
     db::weekly_packet(&conn)
-}
-
-#[tauri::command]
-pub fn limits(state: State<'_, AppData>) -> Result<db::Limits, String> {
-    let conn = connection(&state)?;
-    db::limits(&conn)
 }
 
 #[tauri::command]

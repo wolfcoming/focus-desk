@@ -7,9 +7,6 @@ use crate::judge::{
 };
 use crate::timeutil::{self, now, parse_stored};
 
-pub const PROJECT_CAP: i64 = 3;
-pub const SUBPROJECT_CAP: i64 = 5;
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -53,6 +50,7 @@ pub struct WorkLog {
     pub body: String,
     pub progress: String,
     pub progress_percent: Option<i64>,
+    pub kind: String,
     pub created_at: String,
 }
 
@@ -103,6 +101,8 @@ pub struct Suggested {
 pub struct TodayBoard {
     pub day: String,
     pub slots: Vec<Item>,
+    pub completed_count: i64,
+    pub todos: Vec<Item>,
     pub dailies: Vec<DailyView>,
     pub chores: Vec<Item>,
     pub suggestions: Vec<Suggested>,
@@ -125,15 +125,6 @@ pub struct WeeklyPacket {
     pub follow_ups: Vec<Item>,
     pub undated_important: Vec<Item>,
     pub overrides: Vec<OverrideNote>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Limits {
-    pub active_projects: i64,
-    pub active_subprojects: i64,
-    pub project_cap: i64,
-    pub subproject_cap: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,7 +210,7 @@ CREATE TABLE IF NOT EXISTS subprojects (
 );
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('inbox','task','daily','waiting','someday')),
+  kind TEXT NOT NULL CHECK (kind IN ('inbox','task','daily','waiting','someday','todo')),
   title TEXT NOT NULL,
   notes TEXT NOT NULL DEFAULT '',
   project_id INTEGER REFERENCES projects(id),
@@ -247,6 +238,12 @@ CREATE TABLE IF NOT EXISTS today_slots (
   item_id INTEGER NOT NULL REFERENCES items(id),
   PRIMARY KEY (day, position)
 );
+CREATE TABLE IF NOT EXISTS today_completions (
+  day TEXT NOT NULL,
+  item_id INTEGER NOT NULL REFERENCES items(id),
+  completed_at TEXT NOT NULL,
+  PRIMARY KEY (day, item_id)
+);
 CREATE TABLE IF NOT EXISTS daily_marks (
   item_id INTEGER NOT NULL REFERENCES items(id),
   day TEXT NOT NULL,
@@ -272,6 +269,7 @@ CREATE TABLE IF NOT EXISTS work_logs (
   body TEXT NOT NULL,
   progress TEXT NOT NULL,
   progress_percent INTEGER,
+  kind TEXT NOT NULL DEFAULT 'key',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -324,6 +322,104 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     if ensure_column(conn, "subprojects", "sort_order", "INTEGER NOT NULL DEFAULT 0")? {
         backfill_subproject_sort_orders(conn)?;
     }
+    ensure_items_allow_todo(conn)?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS today_completions (
+           day TEXT NOT NULL,
+           item_id INTEGER NOT NULL REFERENCES items(id),
+           completed_at TEXT NOT NULL,
+           PRIMARY KEY (day, item_id)
+         );",
+    )
+    .map_err(|err| err.to_string())?;
+    // key=关键进展流；work=调整进度时的工作日志
+    ensure_column(conn, "work_logs", "kind", "TEXT NOT NULL DEFAULT 'key'")?;
+    Ok(())
+}
+
+fn note_today_focus_completion(conn: &Connection, id: i64, stamp: &str) -> Result<(), String> {
+    let day = timeutil::today_key(now());
+    let in_today = conn
+        .query_row(
+            "SELECT 1 FROM today_slots WHERE day = ?1 AND item_id = ?2",
+            params![day, id],
+            |_| Ok(1i64),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+        .is_some();
+    if !in_today {
+        return Ok(());
+    }
+    // 完成后仍留在槽位上展示，仅记入今日完成数
+    conn.execute(
+        "INSERT INTO today_completions (day, item_id, completed_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(day, item_id) DO UPDATE SET completed_at = excluded.completed_at",
+        params![day, id, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn ensure_items_allow_todo(conn: &Connection) -> Result<(), String> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?;
+    let Some(sql) = sql else {
+        return Ok(());
+    };
+    if sql.contains("'todo'") {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+PRAGMA foreign_keys = OFF;
+CREATE TABLE items__todo_mig (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('inbox','task','daily','waiting','someday','todo')),
+  title TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  project_id INTEGER REFERENCES projects(id),
+  subproject_id INTEGER REFERENCES subprojects(id),
+  important INTEGER,
+  urgent INTEGER NOT NULL DEFAULT 0,
+  due_at TEXT,
+  estimate_min INTEGER,
+  status TEXT NOT NULL CHECK (status IN ('inbox','open','doing','done','dropped')),
+  repeat_days TEXT,
+  window_start TEXT,
+  window_end TEXT,
+  grace_min INTEGER,
+  interrupt_after_grace INTEGER NOT NULL DEFAULT 0,
+  waiting_on TEXT,
+  follow_up_at TEXT,
+  started_at TEXT,
+  snooze_until TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+INSERT INTO items__todo_mig (
+  id, kind, title, notes, project_id, subproject_id, important, urgent, due_at, estimate_min, status,
+  repeat_days, window_start, window_end, grace_min, interrupt_after_grace, waiting_on, follow_up_at,
+  started_at, snooze_until, created_at, updated_at, completed_at
+)
+SELECT
+  id, kind, title, notes, project_id, subproject_id, important, COALESCE(urgent, 0), due_at, estimate_min, status,
+  repeat_days, window_start, window_end, grace_min, interrupt_after_grace, waiting_on, follow_up_at,
+  started_at, snooze_until, created_at, updated_at, completed_at
+FROM items;
+DROP TABLE items;
+ALTER TABLE items__todo_mig RENAME TO items;
+PRAGMA foreign_keys = ON;
+"#,
+    )
+    .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -615,6 +711,7 @@ pub fn set_subproject_status(
     }
     let _ = pause_subproject_id;
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let stamp = timeutil::now_iso();
     if status == "active" {
         let kind: String = tx
             .query_row(
@@ -624,27 +721,27 @@ pub fn set_subproject_status(
             )
             .map_err(|_| "找不到这个子任务".to_string())?;
         if kind != "periodic" {
-            let open_tasks: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM items WHERE subproject_id = ?1 AND kind = 'task' AND status IN ('open','doing')",
-                    params![id],
-                    |row| row.get(0),
-                )
-                .map_err(|err| err.to_string())?;
-            if open_tasks == 0 {
-                return Err("进行中的子任务要有一个下一步".into());
-            }
+            ensure_open_task_tx(&tx, id, &stamp)?;
         }
-    }
-    let stamp = timeutil::now_iso();
-    let changed = tx
-        .execute(
-            "UPDATE subprojects SET status = ?2, updated_at = ?3, last_touched_at = ?3 WHERE id = ?1",
-            params![id, status, stamp],
-        )
-        .map_err(|err| err.to_string())?;
-    if changed != 1 {
-        return Err("找不到这个子任务".into());
+        let changed = tx
+            .execute(
+                "UPDATE subprojects SET status = 'active', progress = CASE WHEN progress = '' OR progress = 'not_started' THEN 'doing' ELSE progress END, updated_at = ?2, last_touched_at = ?2 WHERE id = ?1",
+                params![id, stamp],
+            )
+            .map_err(|err| err.to_string())?;
+        if changed != 1 {
+            return Err("找不到这个子任务".into());
+        }
+    } else {
+        let changed = tx
+            .execute(
+                "UPDATE subprojects SET status = ?2, updated_at = ?3, last_touched_at = ?3 WHERE id = ?1",
+                params![id, status, stamp],
+            )
+            .map_err(|err| err.to_string())?;
+        if changed != 1 {
+            return Err("找不到这个子任务".into());
+        }
     }
     tx.commit().map_err(|err| err.to_string())?;
     get_subproject(conn, id)
@@ -705,9 +802,17 @@ pub fn update_subproject(conn: &Connection, id: i64, name: &str, description: &s
 }
 
 pub fn add_work_log(conn: &Connection, subproject_id: i64, body: &str) -> Result<WorkLog, String> {
+    insert_work_log(conn, subproject_id, body, "key")
+}
+
+fn insert_work_log(conn: &Connection, subproject_id: i64, body: &str, kind: &str) -> Result<WorkLog, String> {
     let body = body.trim();
     if body.is_empty() {
-        return Err("写一下进展内容".into());
+        return Err(if kind == "work" {
+            "写一下工作日志".into()
+        } else {
+            "写一下关键进展".into()
+        });
     }
     let (progress, percent): (String, Option<i64>) = conn
         .query_row(
@@ -718,8 +823,9 @@ pub fn add_work_log(conn: &Connection, subproject_id: i64, body: &str) -> Result
         .map_err(|_| "找不到这个子任务".to_string())?;
     let stamp = timeutil::now_iso();
     conn.execute(
-        "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![subproject_id, body, progress, percent, stamp],
+        "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![subproject_id, body, progress, percent, kind, stamp],
     )
     .map_err(|err| err.to_string())?;
     let id = conn.last_insert_rowid();
@@ -730,13 +836,13 @@ pub fn add_work_log(conn: &Connection, subproject_id: i64, body: &str) -> Result
 pub fn update_work_log(conn: &Connection, id: i64, body: &str) -> Result<WorkLog, String> {
     let body = body.trim();
     if body.is_empty() {
-        return Err("写一下进展内容".into());
+        return Err("写一下内容".into());
     }
     let changed = conn
         .execute("UPDATE work_logs SET body = ?2 WHERE id = ?1", params![id, body])
         .map_err(|err| err.to_string())?;
     if changed != 1 {
-        return Err("找不到这条进展".into());
+        return Err("找不到这条记录".into());
     }
     get_work_log(conn, id)
 }
@@ -746,14 +852,15 @@ pub fn delete_work_log(conn: &Connection, id: i64) -> Result<(), String> {
         .execute("DELETE FROM work_logs WHERE id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     if changed != 1 {
-        return Err("找不到这条进展".into());
+        return Err("找不到这条记录".into());
     }
     Ok(())
 }
 
 fn get_work_log(conn: &Connection, id: i64) -> Result<WorkLog, String> {
     conn.query_row(
-        "SELECT id, subproject_id, body, progress, progress_percent, created_at FROM work_logs WHERE id = ?1",
+        "SELECT id, subproject_id, body, progress, progress_percent, COALESCE(kind, 'key'), created_at
+         FROM work_logs WHERE id = ?1",
         params![id],
         |row| {
             Ok(WorkLog {
@@ -762,11 +869,12 @@ fn get_work_log(conn: &Connection, id: i64) -> Result<WorkLog, String> {
                 body: row.get(2)?,
                 progress: row.get(3)?,
                 progress_percent: row.get(4)?,
-                created_at: row.get(5)?,
+                kind: row.get(5)?,
+                created_at: row.get(6)?,
             })
         },
     )
-    .map_err(|_| "找不到这条进展".to_string())
+    .map_err(|_| "找不到这条记录".to_string())
 }
 
 pub fn set_subproject_due(conn: &Connection, id: i64, due_at: Option<&str>) -> Result<Subproject, String> {
@@ -798,6 +906,39 @@ pub fn set_subproject_due(conn: &Connection, id: i64, due_at: Option<&str>) -> R
         params![id, due, stamp],
     )
     .map_err(|err| err.to_string())?;
+    tx.commit().map_err(|err| err.to_string())?;
+    get_subproject(conn, id)
+}
+
+pub fn set_subproject_repeat(conn: &Connection, id: i64, repeat_days: &str) -> Result<Subproject, String> {
+    let repeat = normalize_repeat(Some(repeat_days))?;
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let kind: String = tx
+        .query_row(
+            "SELECT COALESCE(kind, 'regular') FROM subprojects WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    if kind != "periodic" {
+        return Err("只有周期性任务才能改重复日期".into());
+    }
+    let stamp = timeutil::now_iso();
+    tx.execute(
+        "UPDATE subprojects SET updated_at = ?2 WHERE id = ?1",
+        params![id, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    let changed = tx
+        .execute(
+            "UPDATE items SET repeat_days = ?2, updated_at = ?3
+             WHERE subproject_id = ?1 AND kind = 'daily'",
+            params![id, repeat, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed == 0 {
+        return Err("找不到这条周期性任务".into());
+    }
     tx.commit().map_err(|err| err.to_string())?;
     get_subproject(conn, id)
 }
@@ -950,29 +1091,13 @@ pub fn set_subproject_progress(
         )
         .map_err(|err| err.to_string())?;
     } else {
-        let open: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM items WHERE subproject_id = ?1 AND kind = 'task' AND status IN ('open','doing')",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(|err| err.to_string())?;
-        if open == 0 {
-            tx.execute(
-                "UPDATE items SET status = 'open', completed_at = NULL, updated_at = ?2, snooze_until = NULL
-                 WHERE id = (
-                   SELECT id FROM items WHERE subproject_id = ?1 AND kind = 'task' AND status = 'done'
-                   ORDER BY id LIMIT 1
-                 )",
-                params![id, stamp],
-            )
-            .map_err(|err| err.to_string())?;
-        }
+        ensure_open_task_tx(&tx, id, &stamp)?;
     }
     let body = log.unwrap_or("").trim();
     if !body.is_empty() {
         tx.execute(
-            "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'work', ?5)",
             params![id, body, progress, progress_percent, stamp],
         )
         .map_err(|err| err.to_string())?;
@@ -981,10 +1106,51 @@ pub fn set_subproject_progress(
     get_subproject(conn, id)
 }
 
+fn ensure_open_task_tx(tx: &Connection, sub_id: i64, stamp: &str) -> Result<(), String> {
+    let open: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM items WHERE subproject_id = ?1 AND kind = 'task' AND status IN ('open','doing')",
+            params![sub_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    if open > 0 {
+        return Ok(());
+    }
+    let reopened = tx
+        .execute(
+            "UPDATE items SET status = 'open', completed_at = NULL, updated_at = ?2, snooze_until = NULL
+             WHERE id = (
+               SELECT id FROM items WHERE subproject_id = ?1 AND kind = 'task' AND status = 'done'
+               ORDER BY id LIMIT 1
+             )",
+            params![sub_id, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if reopened > 0 {
+        return Ok(());
+    }
+    let (name, description, project_id): (String, String, i64) = tx
+        .query_row(
+            "SELECT name, COALESCE(description, ''), project_id FROM subprojects WHERE id = ?1",
+            params![sub_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| "找不到这个子任务".to_string())?;
+    tx.execute(
+        "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, status, interrupt_after_grace, created_at, updated_at)
+         VALUES ('task', ?1, ?2, ?3, ?4, 0, 0, NULL, 'open', 0, ?5, ?5)",
+        params![name, description, project_id, sub_id, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 pub fn list_work_logs(conn: &Connection, project_id: Option<i64>) -> Result<Vec<WorkLog>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT w.id, w.subproject_id, w.body, w.progress, w.progress_percent, w.created_at
+            "SELECT w.id, w.subproject_id, w.body, w.progress, w.progress_percent,
+                    COALESCE(w.kind, 'key'), w.created_at
              FROM work_logs w
              JOIN subprojects s ON s.id = w.subproject_id
              WHERE (?1 IS NULL OR s.project_id = ?1)
@@ -999,7 +1165,8 @@ pub fn list_work_logs(conn: &Connection, project_id: Option<i64>) -> Result<Vec<
                 body: row.get(2)?,
                 progress: row.get(3)?,
                 progress_percent: row.get(4)?,
-                created_at: row.get(5)?,
+                kind: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })
         .map_err(|err| err.to_string())?;
@@ -1009,6 +1176,7 @@ pub fn list_work_logs(conn: &Connection, project_id: Option<i64>) -> Result<Vec<
 fn purge_items(conn: &Connection, id_query: &str, id: i64) -> Result<(), String> {
     let run = |sql: String| conn.execute(&sql, params![id]).map(|_| ()).map_err(|err| err.to_string());
     run(format!("DELETE FROM today_slots WHERE item_id IN ({id_query})"))?;
+    run(format!("DELETE FROM today_completions WHERE item_id IN ({id_query})"))?;
     run(format!("DELETE FROM daily_marks WHERE item_id IN ({id_query})"))?;
     run(format!("UPDATE activity_logs SET matched_item_id = NULL WHERE matched_item_id IN ({id_query})"))?;
     run(format!("UPDATE activity_logs SET incoming_item_id = NULL WHERE incoming_item_id IN ({id_query})"))?;
@@ -1074,6 +1242,21 @@ pub fn capture(conn: &Connection, title: &str) -> Result<Item, String> {
     let stamp = timeutil::now_iso();
     conn.execute(
         "INSERT INTO items (kind, title, notes, status, interrupt_after_grace, created_at, updated_at)
+         VALUES ('todo', ?1, '', 'open', 0, ?2, ?2)",
+        params![title, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    get_item(conn, conn.last_insert_rowid())
+}
+
+pub fn capture_inbox(conn: &Connection, title: &str) -> Result<Item, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("先写一句话".into());
+    }
+    let stamp = timeutil::now_iso();
+    conn.execute(
+        "INSERT INTO items (kind, title, notes, status, interrupt_after_grace, created_at, updated_at)
          VALUES ('inbox', ?1, '', 'inbox', 0, ?2, ?2)",
         params![title, stamp],
     )
@@ -1091,6 +1274,9 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
         if let Ok(existing) = get_item(conn, id) {
             if existing.status == "doing" && prepared.kind == "task" {
                 prepared.status = "doing".into();
+            }
+            if existing.status == "done" && prepared.kind == "todo" && existing.kind == "todo" {
+                prepared.status = "done".into();
             }
         }
     }
@@ -1195,6 +1381,10 @@ pub fn complete_task(conn: &Connection, id: i64) -> Result<Item, String> {
         params![id, stamp],
     )
     .map_err(|err| err.to_string())?;
+    note_today_focus_completion(conn, id, &stamp)?;
+    if item.kind == "todo" {
+        return get_item(conn, id);
+    }
     if let Some(sub_id) = item.subproject_id {
         let kind: String = conn
             .query_row(
@@ -1215,6 +1405,27 @@ pub fn complete_task(conn: &Connection, id: i64) -> Result<Item, String> {
         } else {
             touch_subproject(conn, sub_id)?;
         }
+    }
+    get_item(conn, id)
+}
+
+pub fn set_todo_done(conn: &Connection, id: i64, done: bool) -> Result<Item, String> {
+    let item = get_item(conn, id)?;
+    if item.kind != "todo" {
+        return Err("只有待办可以用勾选完成".into());
+    }
+    if done {
+        return complete_task(conn, id);
+    }
+    let stamp = timeutil::now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE items SET status = 'open', completed_at = NULL, updated_at = ?2, snooze_until = NULL WHERE id = ?1",
+            params![id, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这条待办".into());
     }
     get_item(conn, id)
 }
@@ -1279,13 +1490,29 @@ pub fn set_today(conn: &Connection, ids: &[i64]) -> Result<(), String> {
         return Err("今日项目重点最多 3 件".into());
     }
     let day = timeutil::today_key(now());
+    let current: std::collections::HashSet<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT item_id FROM today_slots WHERE day = ?1")
+            .map_err(|err| err.to_string())?;
+        stmt.query_map(params![day], |row| row.get(0))
+            .map_err(|err| err.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .collect()
+    };
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
     tx.execute("DELETE FROM today_slots WHERE day = ?1", params![day])
         .map_err(|err| err.to_string())?;
     for (index, id) in ids.iter().enumerate() {
         let item = get_item(&tx, *id)?;
-        if item.kind != "task" || matches!(item.status.as_str(), "done" | "dropped" | "inbox") {
-            return Err("今日三件只能是未完成的项目任务".into());
+        if !matches!(item.kind.as_str(), "task" | "todo") {
+            return Err("今日三件只能是任务或待办".into());
+        }
+        let keep_done = item.status == "done" && current.contains(id);
+        let fresh_open = matches!(item.status.as_str(), "open" | "doing");
+        if !keep_done && !fresh_open {
+            return Err("今日三件只能放入未完成的任务或待办".into());
         }
         tx.execute(
             "INSERT INTO today_slots (day, position, item_id) VALUES (?1, ?2, ?3)",
@@ -1304,7 +1531,7 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
         .prepare(&format!(
             "{ITEM_SELECT}
              JOIN today_slots t ON t.item_id = i.id
-             WHERE t.day = ?1 AND i.status NOT IN ('done','dropped')
+             WHERE t.day = ?1 AND i.status != 'dropped'
              ORDER BY t.position"
         ))
         .map_err(|err| err.to_string())?;
@@ -1327,6 +1554,24 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let mut todo_stmt = conn
+        .prepare(&format!(
+            "{ITEM_SELECT}
+             WHERE i.kind = 'todo'
+               AND i.status != 'dropped'
+               AND (
+                 i.status = 'open'
+                 OR (i.status = 'done' AND i.completed_at IS NOT NULL AND substr(i.completed_at, 1, 10) = ?1)
+               )
+             ORDER BY CASE i.status WHEN 'open' THEN 0 ELSE 1 END, i.id DESC"
+        ))
+        .map_err(|err| err.to_string())?;
+    let todos = todo_stmt
+        .query_map(params![day], map_item)
+        .map_err(|err| err.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())?;
+
     let chores = list_items(conn, Some("task"))?
         .into_iter()
         .filter(|item| {
@@ -1336,9 +1581,19 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
         })
         .collect();
 
+    let completed_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM today_completions WHERE day = ?1",
+            params![day],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+
     Ok(TodayBoard {
         day,
         slots,
+        completed_count,
+        todos,
         dailies,
         chores,
         suggestions: rule_suggestions(conn)?,
@@ -1347,9 +1602,9 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
 
 pub fn weekly_packet(conn: &Connection) -> Result<WeeklyPacket, String> {
     let moment = now();
-    let inbox = list_items(conn, Some("inbox"))?
+    let inbox = list_items(conn, Some("todo"))?
         .into_iter()
-        .filter(|item| item.status == "inbox")
+        .filter(|item| item.status == "open" && item.project_id.is_none() && item.subproject_id.is_none())
         .collect();
     let stale_cutoff = timeutil::iso(moment - Duration::days(3));
     let mut stmt = conn
@@ -1413,15 +1668,6 @@ pub fn weekly_packet(conn: &Connection) -> Result<WeeklyPacket, String> {
     })
 }
 
-pub fn limits(conn: &Connection) -> Result<Limits, String> {
-    Ok(Limits {
-        active_projects: count(conn, "SELECT COUNT(*) FROM projects WHERE status = 'active'")?,
-        active_subprojects: count(conn, "SELECT COUNT(*) FROM subprojects WHERE status = 'active'")?,
-        project_cap: PROJECT_CAP,
-        subproject_cap: SUBPROJECT_CAP,
-    })
-}
-
 pub fn bump_follow_up(conn: &Connection, id: i64, days: i64) -> Result<Item, String> {
     let next = timeutil::iso(now() + Duration::days(days.max(1)));
     let stamp = timeutil::now_iso();
@@ -1447,9 +1693,16 @@ pub fn reminder_target(conn: &Connection) -> Result<ReminderTarget, String> {
         let item = get_item(conn, item_id)?;
         if item.kind == "waiting" {
             return Ok(ReminderTarget {
-                page: "waiting".into(),
+                page: "projects".into(),
                 project_id: item.project_id,
                 subproject_id: None,
+            });
+        }
+        if item.kind == "todo" {
+            return Ok(ReminderTarget {
+                page: "todos".into(),
+                project_id: item.project_id,
+                subproject_id: item.subproject_id,
             });
         }
         let project_id = item.project_id.or_else(|| {
@@ -1522,12 +1775,12 @@ pub fn postpone_reminder_due(
                 let until = parse_stored(&next).unwrap_or(moment);
                 snooze_item(conn, item_id, ((until - moment).num_minutes()).max(1))?;
             }
-            "waiting" => {
+            "waiting" | "todo" => {
                 let current = item.follow_up_at.as_deref().and_then(parse_stored);
                 let next = resolve_postpone_time(minutes, at, current)?;
                 let stamp = timeutil::now_iso();
                 conn.execute(
-                    "UPDATE items SET follow_up_at = ?2, snooze_until = ?2, updated_at = ?3 WHERE id = ?1 AND kind = 'waiting'",
+                    "UPDATE items SET follow_up_at = ?2, snooze_until = ?2, updated_at = ?3 WHERE id = ?1 AND kind IN ('waiting','todo')",
                     params![item_id, next, stamp],
                 )
                 .map_err(|err| err.to_string())?;
@@ -1807,9 +2060,9 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         Some(launch), None, None, None, None, "open",
         None, None, None, None, 0, Some("设计组"), Some(&timeutil::iso(moment + Duration::days(1))), None, None, None, &stamp,
     )?;
-    insert_item(&tx, "inbox", "客户说合同还要改一版，不知道归到哪条线", "给临时任务整理用，智能体可以建议挂到合同盖章。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "inbox", "下周三之前把报价发出去", "给临时任务整理用，有时间但还没变成任务。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
-    insert_item(&tx, "inbox", "有空问问设计稿什么时候能看", "可能是等待跟进。", None, None, None, None, None, "inbox", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "todo", "客户说合同还要改一版，不知道归到哪条线", "未挂靠待办，可关联到合同盖章。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "todo", "下周三之前把报价发出去", "未挂靠待办，有时间但还没变成任务。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "todo", "有空问问设计稿什么时候能看", "可能整理成阻塞项。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
 
     let grace_end = clock(-90);
     let grace_start = clock(-120);
@@ -2206,6 +2459,48 @@ fn prepare_draft(conn: &Connection, draft: &ItemDraft, title: &str) -> Result<Pr
                 follow_up_at: None,
             })
         }
+        "todo" => {
+            let (project_id, subproject_id) = match (draft.project_id, draft.subproject_id) {
+                (None, None) => (None, None),
+                (Some(project_id), None) => {
+                    let _ = get_project(conn, project_id)?;
+                    (Some(project_id), None)
+                }
+                (project_id, Some(sub_id)) => {
+                    let sub = get_subproject(conn, sub_id)?;
+                    let project_id = project_id.unwrap_or(sub.project_id);
+                    if project_id != sub.project_id {
+                        return Err("子任务不属于所选项目".into());
+                    }
+                    let _ = get_project(conn, project_id)?;
+                    (Some(project_id), Some(sub_id))
+                }
+            };
+            let due_at = normalize_optional(draft.due_at.as_deref())?;
+            let follow_up_at = match draft.follow_up_at.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                Some(value) => Some(timeutil::parse_user_time(value)?),
+                None => None,
+            };
+            Ok(PreparedDraft {
+                kind: "todo".into(),
+                title: title.into(),
+                notes,
+                project_id,
+                subproject_id,
+                important: None,
+                urgent: None,
+                due_at,
+                estimate_min: None,
+                status: "open".into(),
+                repeat_days: None,
+                window_start: None,
+                window_end: None,
+                grace_min: None,
+                interrupt: 0,
+                waiting_on: None,
+                follow_up_at,
+            })
+        }
         "daily" => Err("日常只能通过项目里的周期性子任务创建".into()),
         "waiting" => {
             let project_id = draft.project_id.ok_or("等待要挂在大项目上")?;
@@ -2287,11 +2582,6 @@ fn get_subproject(conn: &Connection, id: i64) -> Result<Subproject, String> {
         map_subproject,
     )
     .map_err(|_| "找不到这个子任务".to_string())
-}
-
-fn count(conn: &Connection, sql: &str) -> Result<i64, String> {
-    conn.query_row(sql, [], |row| row.get(0))
-        .map_err(|err| err.to_string())
 }
 
 fn map_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
@@ -2662,14 +2952,18 @@ mod tests {
         seed_demo(&conn).unwrap();
         let active_projects: i64 = conn.query_row("SELECT COUNT(*) FROM projects WHERE status = 'active'", [], |row| row.get(0)).unwrap();
         let active_subs: i64 = conn.query_row("SELECT COUNT(*) FROM subprojects WHERE status = 'active'", [], |row| row.get(0)).unwrap();
-        let inbox: i64 = conn.query_row("SELECT COUNT(*) FROM items WHERE kind = 'inbox' AND status = 'inbox'", [], |row| row.get(0)).unwrap();
+        let loose_todos: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE kind = 'todo' AND status = 'open' AND project_id IS NULL AND subproject_id IS NULL",
+            [],
+            |row| row.get(0),
+        ).unwrap();
         let waiting: i64 = conn.query_row("SELECT COUNT(*) FROM items WHERE kind = 'waiting' AND status = 'open'", [], |row| row.get(0)).unwrap();
         let dailies: i64 = conn.query_row("SELECT COUNT(*) FROM items WHERE kind = 'daily'", [], |row| row.get(0)).unwrap();
         let slots: i64 = conn.query_row("SELECT COUNT(*) FROM today_slots", [], |row| row.get(0)).unwrap();
         let logs: i64 = conn.query_row("SELECT COUNT(*) FROM activity_logs WHERE match_source = 'ai'", [], |row| row.get(0)).unwrap();
         assert_eq!(active_projects, 4);
         assert_eq!(active_subs, 11);
-        assert_eq!(inbox, 3);
+        assert_eq!(loose_todos, 3);
         assert_eq!(waiting, 2);
         assert!(dailies >= 6);
         let orphan_dailies: i64 = conn
@@ -2679,5 +2973,109 @@ mod tests {
         assert_eq!(slots, 3);
         assert_eq!(logs, 2);
         assert_eq!(get_setting(&conn, "ai_model").unwrap().as_deref(), Some("openai/gpt-4o-mini"));
+    }
+
+    #[test]
+    fn todos_capture_attach_and_toggle_without_progress() {
+        let conn = memory();
+        let loose = capture(&conn, "买电池").unwrap();
+        assert_eq!(loose.kind, "todo");
+        assert_eq!(loose.status, "open");
+        assert!(loose.project_id.is_none());
+
+        let project = create_project(
+            &conn,
+            &NewProject {
+                name: "家务".into(),
+                outcome: "屋子好用".into(),
+                status: "active".into(),
+            },
+        )
+        .unwrap();
+        let sub = create_subproject(
+            &conn,
+            &NewSubproject {
+                project_id: project.id,
+                kind: "regular".into(),
+                name: "厨房".into(),
+                description: "整理台面".into(),
+                important: false,
+                urgent: false,
+                progress: "doing".into(),
+                due_at: None,
+                repeat_days: None,
+                remind: false,
+                remind_at: None,
+                progress_percent: None,
+            },
+        )
+        .unwrap();
+        let attached = save_item(
+            &conn,
+            &ItemDraft {
+                id: None,
+                kind: "todo".into(),
+                title: "擦灶台".into(),
+                notes: "".into(),
+                project_id: Some(project.id),
+                subproject_id: Some(sub.id),
+                important: None,
+                urgent: None,
+                due_at: None,
+                estimate_min: None,
+                repeat_days: None,
+                window_start: None,
+                window_end: None,
+                grace_min: None,
+                interrupt_after_grace: false,
+                waiting_on: None,
+                follow_up_at: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(attached.kind, "todo");
+        assert_eq!(attached.project_id, Some(project.id));
+        assert_eq!(attached.subproject_id, Some(sub.id));
+
+        let done = set_todo_done(&conn, attached.id, true).unwrap();
+        assert_eq!(done.status, "done");
+        let board = today_board(&conn).unwrap();
+        assert!(board.todos.iter().any(|item| item.id == attached.id && item.status == "done"));
+        assert!(board.todos.iter().any(|item| item.id == loose.id && item.status == "open"));
+        assert!(set_today(&conn, &[attached.id]).unwrap_err().contains("今日三件"));
+
+        let reopened = set_todo_done(&conn, attached.id, false).unwrap();
+        assert_eq!(reopened.status, "open");
+        set_today(&conn, &[reopened.id]).unwrap();
+        let focus = today_board(&conn).unwrap();
+        assert!(focus.slots.iter().any(|item| item.id == reopened.id && item.kind == "todo"));
+        let scheduled = save_item(
+            &conn,
+            &ItemDraft {
+                id: None,
+                kind: "todo".into(),
+                title: "带提醒的待办".into(),
+                notes: "".into(),
+                project_id: None,
+                subproject_id: None,
+                important: None,
+                urgent: None,
+                due_at: Some("2099-12-31T18:00".into()),
+                estimate_min: None,
+                repeat_days: None,
+                window_start: None,
+                window_end: None,
+                grace_min: None,
+                interrupt_after_grace: false,
+                waiting_on: None,
+                follow_up_at: Some("2099-12-30T09:00".into()),
+            },
+        )
+        .unwrap();
+        assert!(scheduled.due_at.as_deref().unwrap_or("").starts_with("2099-12-31T18:00"));
+        assert!(scheduled.follow_up_at.as_deref().unwrap_or("").starts_with("2099-12-30T09:00"));
+        let inbox = capture_inbox(&conn, "还要想清楚").unwrap();
+        assert_eq!(inbox.kind, "inbox");
+        assert_eq!(inbox.status, "inbox");
     }
 }

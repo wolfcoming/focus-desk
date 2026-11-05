@@ -158,7 +158,7 @@ pub async fn clarify(
     );
     match chat(
         &config,
-        "你是个人任务整理助手。只返回一个 JSON 对象，不要解释，不要 Markdown。字段必须是扁平值：title/notes/waitingOn/dueAt/followUpAt 只能是字符串或 null，不能是对象；projectId 只能是数字或 null；important/urgent 只能是 true/false。kind 只能是 task 或 waiting。项目任务和等待跟进都用 projectId（大项目 id），不要填 subprojectId；等待跟进还要给出 waitingOn 和 followUpAt。id 只能用给定的，不能编造。不要填 estimateMin。时间用 YYYY-MM-DDTHH:MM。",
+        "你是个人任务整理助手。只返回一个 JSON 对象，不要解释，不要 Markdown。字段必须是扁平值：title/notes/waitingOn/dueAt/followUpAt 只能是字符串或 null，不能是对象；projectId 只能是数字或 null；important/urgent 只能是 true/false。kind 只能是 todo、task 或 waiting。todo=仍为待办但挂上项目；task=项目任务；waiting=阻塞项。都用 projectId（大项目 id）；todo 可填 subprojectId，task/waiting 不要填 subprojectId；waiting 还要给出 waitingOn 和 followUpAt。id 只能用给定的，不能编造。不要填 estimateMin。时间用 YYYY-MM-DDTHH:MM。",
         &user,
     )
     .await
@@ -242,7 +242,7 @@ pub async fn morning(config: Option<AiConfig>, suggestions: &[Suggested]) -> Mor
 
 pub async fn weekly(config: Option<AiConfig>, packet: &WeeklyPacket) -> WeeklyResult {
     let rules = format!(
-        "临时任务 {} 条，停滞的子任务 {} 个，到点的等待 {} 条，没有截止的重要任务 {} 条，本周拒绝切换 {} 次。",
+        "未挂靠待办 {} 条，停滞的子任务 {} 个，到点的阻塞 {} 条，没有截止的重要任务 {} 条，本周拒绝切换 {} 次。",
         packet.inbox.len(),
         packet.stale.len(),
         packet.follow_ups.len(),
@@ -478,6 +478,7 @@ fn parse_draft(text: &str, item: &Item, projects: &[Project], subs: &[Subproject
     let value = extract_json(text)?;
     let kind = match json_str(&value, &["kind"]).as_str() {
         "waiting" => "waiting".into(),
+        "todo" => "todo".into(),
         _ => "task".into(),
     };
     let title = json_str(&value, &["title"]);
@@ -494,7 +495,15 @@ fn parse_draft(text: &str, item: &Item, projects: &[Project], subs: &[Subproject
             })
         })
         .filter(|id| projects.iter().any(|project| project.id == *id));
-    let subproject_id = None;
+    let subproject_id = if kind == "todo" {
+        json_i64(&value, &["subprojectId", "subproject_id"]).and_then(|id| {
+            subs.iter().find(|sub| {
+                sub.id == id && project_id.map(|pid| pid == sub.project_id).unwrap_or(false)
+            }).map(|sub| sub.id)
+        })
+    } else {
+        None
+    };
     Ok(ItemDraft {
         id: Some(item.id),
         kind,
@@ -633,13 +642,14 @@ fn parse_morning(text: &str, allowed: &[MorningPick]) -> Result<Vec<MorningPick>
 }
 
 fn blank_draft(item: &Item) -> ItemDraft {
+    let kind = if item.kind == "todo" { "todo" } else { "task" };
     ItemDraft {
         id: Some(item.id),
-        kind: "task".into(),
+        kind: kind.into(),
         title: item.title.clone(),
         notes: item.notes.clone(),
         project_id: item.project_id,
-        subproject_id: item.subproject_id,
+        subproject_id: if kind == "todo" { item.subproject_id } else { None },
         important: item.important,
         urgent: item.urgent,
         due_at: item.due_at.clone(),
