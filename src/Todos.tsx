@@ -662,7 +662,7 @@ export function Todos({
                 )}
                 <button
                   type="button"
-                  className="quiet"
+                  className="quiet todo-link-btn"
                   onClick={() => void run(async () => {
                     await api.dropItem(item.id);
                     window.dispatchEvent(new Event("desk-changed"));

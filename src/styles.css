@@ -99,6 +99,24 @@ input[type="checkbox"]:checked::after {
   transform: translateY(-1px) rotate(-45deg);
 }
 textarea { min-height: 72px; resize: vertical; }
+textarea.log-input {
+  min-height: 0;
+  field-sizing: content;
+  max-height: 160px;
+}
+.log-with-save {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.log-with-save .log-input {
+  flex: 1;
+  min-width: 0;
+}
+.log-with-save button {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
 
 .app {
   display: grid;
@@ -203,6 +221,24 @@ button.back:hover, button.row-open:hover { border-color: transparent; }
 button.row-open { width: 100%; min-width: 0; }
 button.row-open:hover h3 { color: var(--accent-deep); }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; color: var(--ink-soft); font-size: 13px; }
+.project-desc + .facts { margin-top: 8px; }
+.project-header .add-desc {
+  display: inline-flex;
+  margin-top: 10px;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-faint);
+  font-size: 14px;
+}
+.project-header .add-desc:hover {
+  color: var(--accent-deep);
+  border-color: transparent;
+}
+.project-header .sub-info-edit {
+  margin-top: 12px;
+  max-width: 520px;
+}
 .detail-form { margin-top: 8px; }
 .project-page { display: flex; flex-direction: column; gap: 0; }
 .project-header {
@@ -709,8 +745,9 @@ h2 {
   background: radial-gradient(ellipse at center, rgba(120, 170, 195, 0.45), transparent 72%);
 }
 .plate.empty {
-  justify-content: center;
-  align-items: flex-start;
+  justify-content: flex-start;
+  align-items: stretch;
+  gap: 14px;
   min-height: 148px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(222, 234, 241, 0.78));
@@ -721,6 +758,30 @@ h2 {
 }
 .plate.empty:hover { transform: none; }
 .plate.empty::after { opacity: 0.28; }
+.plate-pick {
+  width: 100%;
+  margin-top: auto;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(201, 216, 226, 0.95);
+  border-radius: var(--radius-sm, 8px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+.plate-pick:focus-visible {
+  outline: 2px solid rgba(91, 124, 138, 0.45);
+  outline-offset: 1px;
+}
+.plate-replace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.plate-replace .plate-pick {
+  margin-top: 0;
+}
 .plate.done {
   opacity: 0.78;
   filter: saturate(0.85);
@@ -787,10 +848,6 @@ h2 {
   background: transparent !important;
   border: 0 !important;
 }
-.plate-slot-label {
-  color: var(--ink-faint);
-  font-size: 13px;
-}
 .today-focus-heading {
   display: flex;
   align-items: baseline;
@@ -802,17 +859,6 @@ h2 {
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--ink-faint);
-}
-.today-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin: 8px 0 4px;
-}
-.today-tools .capture {
-  flex: 1 1 280px;
-  margin: 0;
 }
 
 .list { display: flex; flex-direction: column; }
@@ -853,12 +899,27 @@ h2 {
 .with-unit { display: flex; align-items: center; gap: 8px; }
 .with-unit input { flex: 1; min-width: 0; width: auto; }
 .unit { color: var(--ink-soft); line-height: 1; }
-.percent-slider { gap: 8px; }
+.progress-form { gap: 14px; }
+.progress-status {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 520px;
+}
+.progress-status .percent-slider {
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm, 8px);
+  background: color-mix(in srgb, var(--surface-bright) 72%, var(--accent-soft));
+}
+.percent-slider { gap: 6px; }
 .percent-slider-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  color: var(--ink-soft);
+  font-size: 13px;
 }
 .percent-slider-value {
   color: var(--accent-deep);
@@ -1136,8 +1197,6 @@ h2 {
 }
 .progress-step-edit textarea {
   width: 100%;
-  resize: vertical;
-  min-height: 56px;
 }
 .progress-append {
   display: inline-flex;

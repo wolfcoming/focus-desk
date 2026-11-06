@@ -25,7 +25,6 @@ export function Today({
   const [board, setBoard] = useState<TodayBoard | null>(null);
   const [candidates, setCandidates] = useState<Item[]>([]);
   const [subs, setSubs] = useState<Subproject[]>([]);
-  const [pick, setPick] = useState("");
   const [replaceIndex, setReplaceIndex] = useState<number | null>(null);
   const [morning, setMorning] = useState<MorningResult | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
@@ -86,9 +85,45 @@ export function Today({
   const plates = [0, 1, 2].map((index) => slots[index] ?? null);
   const completedCount = board?.completedCount ?? 0;
   const hasEmpty = plates.some((item) => item == null);
-  const pickingForReplace = replaceIndex != null;
 
   const available = candidates.filter((item) => !slots.some((slot) => slot.id === item.id && slot.status !== "done"));
+
+  function placeInSlot(index: number, id: number) {
+    void run(async () => {
+      if (replaceIndex === index) {
+        const next = slots.map((slot, slotIndex) => (slotIndex === index ? id : slot.id));
+        await api.setToday(next);
+        setReplaceIndex(null);
+        return;
+      }
+      await api.setToday([...slots.map((slot) => slot.id), id]);
+    });
+  }
+
+  function slotPicker(index: number, placeholder: string, ariaLabel: string) {
+    return (
+      <select
+        className="plate-pick"
+        value=""
+        onChange={(event) => {
+          const id = Number(event.target.value);
+          if (!id) return;
+          placeInSlot(index, id);
+        }}
+        aria-label={ariaLabel}
+      >
+        <option value="">{placeholder}</option>
+        {available.map((entry) => (
+          <option key={entry.id} value={entry.id}>
+            {entry.kind === "todo" ? "待办" : "任务"}
+            {" · "}
+            {entry.subprojectName ? `${entry.subprojectName} · ` : ""}
+            {entry.title}
+          </option>
+        ))}
+      </select>
+    );
+  }
 
   return (
     <section className="today-page">
@@ -106,7 +141,7 @@ export function Today({
             return (
               <div key={`empty-${index}`} className="plate empty">
                 <div className="plate-index">槽位 {index + 1}</div>
-                <div className="plate-slot-label">还空着</div>
+                {slotPicker(index, "选择任务…", `为槽位 ${index + 1} 选择任务或待办`)}
               </div>
             );
           }
@@ -117,6 +152,7 @@ export function Today({
             ? subs.find((sub) => sub.id === item.subprojectId)
             : undefined;
           const canOpen = item.projectId != null || item.kind === "todo";
+          const replacing = replaceIndex === index;
           return (
             <article
               key={item.id}
@@ -124,17 +160,17 @@ export function Today({
                 "plate",
                 done ? "done" : "",
                 lit ? "lit" : "",
-                canOpen ? "plate-openable" : "",
+                canOpen && !replacing ? "plate-openable" : "",
               ].filter(Boolean).join(" ")}
-              onClick={canOpen ? () => openItem(item) : undefined}
-              onKeyDown={canOpen ? (event) => {
+              onClick={canOpen && !replacing ? () => openItem(item) : undefined}
+              onKeyDown={canOpen && !replacing ? (event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   openItem(item);
                 }
               } : undefined}
-              role={canOpen ? "button" : undefined}
-              tabIndex={canOpen ? 0 : undefined}
+              role={canOpen && !replacing ? "button" : undefined}
+              tabIndex={canOpen && !replacing ? 0 : undefined}
             >
               <div className="plate-index">
                 {done ? "已完成" : lit ? "正在做" : `第 ${index + 1} 件`}
@@ -159,96 +195,58 @@ export function Today({
                   </>
                 ) : null}
               </div>
-              {done ? (
-                <div className="plate-actions" onClick={(event) => event.stopPropagation()}>
+              <div className="plate-actions" onClick={(event) => event.stopPropagation()}>
+                {replacing ? (
+                  <div className="plate-replace">
+                    {slotPicker(index, "换上新的一件…", done ? "挑选一件替换已完成的槽位" : "挑选一件替换当前槽位")}
+                    <button type="button" className="quiet" onClick={() => setReplaceIndex(null)}>
+                      取消
+                    </button>
+                  </div>
+                ) : done ? (
                   <button
                     type="button"
                     className="plate-continue"
-                    onClick={() => {
-                      setReplaceIndex(index);
-                      setPick("");
-                    }}
+                    onClick={() => setReplaceIndex(index)}
                   >
                     继续挑战
                   </button>
-                </div>
-              ) : (
-                <div className="plate-actions" onClick={(event) => event.stopPropagation()}>
-                  {isTask ? (
+                ) : (
+                  <>
+                    {isTask ? (
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => openItem(item)}
+                      >
+                        调整进度
+                      </button>
+                    ) : (
+                      <button type="button" className="primary" onClick={() => void run(() => api.completeItem(item.id))}>
+                        完成
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="primary"
-                      onClick={() => openItem(item)}
+                      className="quiet"
+                      onClick={() => setReplaceIndex(index)}
                     >
-                      调整进度
+                      替换
                     </button>
-                  ) : (
-                    <button type="button" className="primary" onClick={() => void run(() => api.completeItem(item.id))}>
-                      完成
+                    <button
+                      type="button"
+                      className="quiet"
+                      onClick={() => void run(() => api.setToday(slots.filter((slot) => slot.id !== item.id).map((slot) => slot.id)))}
+                    >
+                      移出
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="quiet"
-                    onClick={() => void run(() => api.setToday(slots.filter((slot) => slot.id !== item.id).map((slot) => slot.id)))}
-                  >
-                    移出
-                  </button>
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </article>
           );
         })}
       </div>
-
-      {(hasEmpty || pickingForReplace) && (
-        <div className="today-tools">
-          <form
-            className="capture"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const id = Number(pick);
-              if (!id || !board) return;
-              void run(async () => {
-                if (replaceIndex != null) {
-                  const next = slots.map((slot, index) => (index === replaceIndex ? id : slot.id));
-                  await api.setToday(next);
-                  setReplaceIndex(null);
-                } else {
-                  await api.setToday([...slots.map((slot) => slot.id), id]);
-                }
-                setPick("");
-              });
-            }}
-          >
-            <select
-              value={pick}
-              onChange={(event) => setPick(event.target.value)}
-              aria-label={pickingForReplace ? "挑选一件替换已完成的槽位" : "从现有任务或待办里挑选一件"}
-            >
-              <option value="">
-                {pickingForReplace ? "换上新的一件" : "从现有 任务/待办 里挑选一件"}
-              </option>
-              {available.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.kind === "todo" ? "待办" : "任务"}
-                  {" · "}
-                  {item.subprojectName ? `${item.subprojectName} · ` : ""}
-                  {item.title}
-                </option>
-              ))}
-            </select>
-            <button className="primary" type="submit" disabled={!pick}>
-              {pickingForReplace ? "换上" : "放入槽位"}
-            </button>
-            {pickingForReplace && (
-              <button type="button" className="quiet" onClick={() => { setReplaceIndex(null); setPick(""); }}>
-                取消
-              </button>
-            )}
-          </form>
-        </div>
-      )}
 
       <div className="actions" style={{ justifyContent: "flex-start", marginTop: 8 }}>
         <button

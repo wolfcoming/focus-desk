@@ -13,13 +13,19 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 export function PercentSlider({
   value,
   onChange,
-  label = "进行中进度",
+  onCommit,
+  label = "完成度",
 }: {
   value: number;
   onChange: (value: number) => void;
+  /** 拖动结束或键盘调完时触发，便于即时保存 */
+  onCommit?: (value: number) => void;
   label?: string;
 }) {
   const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  function commitFrom(event: { currentTarget: HTMLInputElement }) {
+    onCommit?.(Number(event.currentTarget.value));
+  }
   return (
     <label className="field percent-slider">
       <span className="percent-slider-head">
@@ -32,11 +38,27 @@ export function PercentSlider({
         max={100}
         step={1}
         value={clamped}
+        aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={clamped}
         aria-valuetext={`${clamped}%`}
         onChange={(event) => onChange(Number(event.target.value))}
+        onPointerUp={commitFrom}
+        onKeyUp={(event) => {
+          if (
+            event.key === "ArrowLeft"
+            || event.key === "ArrowRight"
+            || event.key === "ArrowUp"
+            || event.key === "ArrowDown"
+            || event.key === "Home"
+            || event.key === "End"
+            || event.key === "PageUp"
+            || event.key === "PageDown"
+          ) {
+            commitFrom(event);
+          }
+        }}
       />
     </label>
   );

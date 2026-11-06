@@ -68,6 +68,22 @@ function subMeta(sub: Subproject) {
   return `${progress}${percent}${quadrant ? ` · ${quadrant}` : ""}${sub.dueAt ? ` · 截止 ${when(sub.dueAt)}` : ""}`;
 }
 
+function subDetailFacts(sub: Subproject) {
+  if (sub.kind === "periodic") {
+    return [
+      repeatLabel(sub.repeatDays),
+      sub.remindAt ? `${sub.remindAt} 提醒` : "不定时提醒",
+    ];
+  }
+  const quadrant = QUADRANT_OPTIONS.find((option) => option.value === quadrantValue(sub.important, sub.urgent))?.label
+    ?? sub.quadrant
+    ?? "未设象限";
+  return [
+    quadrant,
+    sub.dueAt ? `截止 ${when(sub.dueAt)}` : "未设截止",
+  ];
+}
+
 export function ProjectOverlays({
   createOpen,
   deleteTarget,
@@ -543,7 +559,7 @@ export function Projects({
                 <span className="todo-title">{item.title}</span>
               </label>
               <div className="actions">
-                <button type="button" className="quiet" disabled={busy} onClick={() => void run(() => api.dropItem(item.id))}>丢掉</button>
+                <button type="button" className="quiet todo-link-btn" disabled={busy} onClick={() => void run(() => api.dropItem(item.id))}>丢掉</button>
               </div>
             </article>
           );
@@ -674,24 +690,15 @@ export function Projects({
                     暂停
                   </button>
                 )}
+                {!editingInfo && (
+                  <button type="button" className="quiet" onClick={beginEditInfo}>修改</button>
+                )}
                 <button type="button" className="quiet tree-delete" onClick={() => { setError(""); setDeleteSub(opened); }}>删除</button>
               </div>
             </div>
-            <p className="lead">{subMeta(opened)}</p>
-            <ErrorText text={error} />
-          </header>
-          <section className="project-section">
-            <div className="section-head">
-              <h2>基本信息</h2>
-              {!editingInfo && (
-                <button type="button" className="quiet section-edit" onClick={beginEditInfo}>
-                  修改
-                </button>
-              )}
-            </div>
             {editingInfo ? (
               <form
-                className="stack detail-form"
+                className="stack detail-form sub-info-edit"
                 onSubmit={(event) => {
                   event.preventDefault();
                   const target = opened;
@@ -797,101 +804,104 @@ export function Projects({
                 </div>
               </form>
             ) : (
-              <div className="info-readonly">
-                <div className="info-block">
-                  <div className="info-label">名称</div>
-                  <div className="info-value">{opened.name}</div>
-                </div>
-                <div className="info-block">
-                  <div className="info-label">描述</div>
-                  <div className="info-value">{opened.description.trim() || "还没有写描述。"}</div>
-                </div>
-                {opened.kind === "periodic" ? (
-                  <>
-                    <div className="info-block">
-                      <div className="info-label">周期性</div>
-                      <div className="info-value">{repeatLabel(opened.repeatDays)}</div>
-                    </div>
-                    <div className="info-block">
-                      <div className="info-label">提醒</div>
-                      <div className="info-value">{opened.remindAt ? `${opened.remindAt} 定时提醒` : "不定时提醒"}</div>
-                    </div>
-                  </>
+              <>
+                {opened.description.trim() ? (
+                  <p className="project-desc">{opened.description}</p>
                 ) : (
-                  <>
-                    <div className="info-block">
-                      <div className="info-label">四象限</div>
-                      <div className="info-value">
-                        {QUADRANT_OPTIONS.find((option) => option.value === quadrantValue(opened.important, opened.urgent))?.label
-                          ?? opened.quadrant
-                          ?? "未设置"}
-                      </div>
-                    </div>
-                    <div className="info-block">
-                      <div className="info-label">截止时间</div>
-                      <div className="info-value">{opened.dueAt ? when(opened.dueAt) : "未设置"}</div>
-                    </div>
-                  </>
+                  <button type="button" className="quiet add-desc" onClick={beginEditInfo}>
+                    添加描述
+                  </button>
                 )}
-              </div>
+                <div className="facts">
+                  {subDetailFacts(opened).map((fact) => (
+                    <span key={fact}>{fact}</span>
+                  ))}
+                </div>
+              </>
             )}
-          </section>
+            <ErrorText text={error} />
+          </header>
 
           {opened.kind !== "periodic" && (
             <section className="project-section">
               <div className="section-head"><h2>进度</h2></div>
-              <form className="stack detail-form" onSubmit={(event) => {
-                event.preventDefault();
-                const target = opened;
-                void run(async () => {
-                  const progressPercent = progressForm.progress === "doing"
-                    ? Math.max(0, Math.min(100, Number(progressForm.progressPercent) || 0))
-                    : null;
-                  await api.setSubprojectProgress(target.id, progressForm.progress, progressPercent, progressForm.log.trim() || null);
-                  setProgressForm({
-                    progress: progressForm.progress,
-                    progressPercent: progressForm.progress === "doing" ? String(progressPercent ?? 0) : "",
-                    log: "",
-                  });
-                });
-              }}>
-                <Field label="进度">
-                  <select
-                    value={progressForm.progress}
-                    onChange={(event) => {
-                      const progress = event.target.value;
-                      setProgressForm({
-                        ...progressForm,
-                        progress,
-                        progressPercent: progress === "doing"
-                          ? progressForm.progressPercent.trim() !== "" ? progressForm.progressPercent : "0"
-                          : progressForm.progressPercent,
-                      });
-                    }}
-                  >
-                    <option value="not_started">未开始</option>
-                    <option value="doing">进行中</option>
-                    <option value="done">已完成</option>
-                  </select>
-                </Field>
-                {progressForm.progress === "doing" && (
-                  <PercentSlider
-                    value={Number(progressForm.progressPercent) || 0}
-                    onChange={(value) => setProgressForm({ ...progressForm, progressPercent: String(value) })}
-                  />
-                )}
-                <Field label="工作日志，可空">
-                  <textarea
-                    rows={3}
-                    placeholder="这次调整进度时做了什么，可留空。保存后可在工作记录里回看。"
-                    value={progressForm.log}
-                    onChange={(event) => setProgressForm({ ...progressForm, log: event.target.value })}
-                  />
-                </Field>
-                <div className="actions" style={{ justifyContent: "flex-start" }}>
-                  <button className="primary" type="submit" disabled={busy}>{busy ? "正在保存…" : "保存"}</button>
+              <div className="stack detail-form progress-form">
+                <div className="progress-status">
+                  <Field label="状态">
+                    <select
+                      value={progressForm.progress}
+                      disabled={busy}
+                      onChange={(event) => {
+                        const progress = event.target.value;
+                        let nextPercent = progressForm.progressPercent;
+                        if (progress === "doing" && nextPercent.trim() === "") nextPercent = "0";
+                        setProgressForm((prev) => ({
+                          ...prev,
+                          progress,
+                          progressPercent: progress === "doing" && prev.progressPercent.trim() === ""
+                            ? "0"
+                            : prev.progressPercent,
+                        }));
+                        const percent = progress === "doing"
+                          ? Math.max(0, Math.min(100, Number(nextPercent) || 0))
+                          : null;
+                        void run(async () => {
+                          await api.setSubprojectProgress(opened.id, progress, percent, null);
+                        });
+                      }}
+                    >
+                      <option value="not_started">未开始</option>
+                      <option value="doing">进行中</option>
+                      <option value="done">已完成</option>
+                    </select>
+                  </Field>
+                  {progressForm.progress === "doing" && (
+                    <PercentSlider
+                      value={Number(progressForm.progressPercent) || 0}
+                      onChange={(value) => setProgressForm((prev) => ({ ...prev, progressPercent: String(value) }))}
+                      onCommit={(value) => {
+                        const percent = Math.max(0, Math.min(100, value));
+                        setProgressForm((prev) => ({ ...prev, progressPercent: String(percent) }));
+                        void run(async () => {
+                          await api.setSubprojectProgress(opened.id, "doing", percent, null);
+                        });
+                      }}
+                    />
+                  )}
                 </div>
-              </form>
+                <Field label="工作日志，可空">
+                  <div className="log-with-save">
+                    <textarea
+                      className="log-input"
+                      rows={1}
+                      placeholder="这次做了什么，可留空"
+                      value={progressForm.log}
+                      onChange={(event) => setProgressForm((prev) => ({ ...prev, log: event.target.value }))}
+                    />
+                    {progressForm.log.trim() !== "" && (
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={busy}
+                        onClick={() => {
+                          const body = progressForm.log.trim();
+                          if (!body) return;
+                          const progress = progressForm.progress;
+                          const percent = progress === "doing"
+                            ? Math.max(0, Math.min(100, Number(progressForm.progressPercent) || 0))
+                            : null;
+                          void run(async () => {
+                            await api.setSubprojectProgress(opened.id, progress, percent, body);
+                            setProgressForm((prev) => ({ ...prev, log: "" }));
+                          });
+                        }}
+                      >
+                        {busy ? "保存中…" : "保存"}
+                      </button>
+                    )}
+                  </div>
+                </Field>
+              </div>
             </section>
           )}
 
@@ -936,7 +946,8 @@ export function Projects({
                             }}
                           >
                             <textarea
-                              rows={2}
+                              className="log-input"
+                              rows={1}
                               value={editingLogBody}
                               onChange={(event) => setEditingLogBody(event.target.value)}
                               aria-label="编辑关键进展"
@@ -1241,7 +1252,8 @@ export function Projects({
               >
                 <Field label="关键进展">
                   <textarea
-                    rows={4}
+                    className="log-input"
+                    rows={1}
                     autoFocus
                     placeholder="这一步做到哪里了"
                     value={updateDraft}
