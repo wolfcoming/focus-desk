@@ -1,17 +1,33 @@
 import { useEffect, useState } from "react";
 import { api, message } from "./api";
-import { AiBusy, ErrorText } from "./widgets";
+import type { Subproject, WorkLog } from "./types";
+import { AiBusy, Empty, ErrorText, when } from "./widgets";
+
+const progressLabel: Record<string, string> = {
+  not_started: "未开始",
+  doing: "进行中",
+  done: "已完成",
+};
+
+function logStamp(log: WorkLog) {
+  const label = progressLabel[log.progress] ?? log.progress;
+  const percent = log.progress === "doing" && log.progressPercent != null ? ` ${log.progressPercent}%` : "";
+  return `${when(log.createdAt)}${label ? ` · ${label}${percent}` : ""}`;
+}
 
 export function Settings({ revision }: { revision: number }) {
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
   const [model, setModel] = useState("gpt-4o-mini");
   const [apiKey, setApiKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
-  const [autostart, setAutostart] = useState(true);
+  const [autostart, setAutostart] = useState(false);
   const [dataPath, setDataPath] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
+  const [loadingDemo, setLoadingDemo] = useState(false);
+  const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
+  const [subs, setSubs] = useState<Subproject[]>([]);
 
   useEffect(() => {
     void api.settings().then((settings) => {
@@ -21,6 +37,15 @@ export function Settings({ revision }: { revision: number }) {
       setAutostart(settings.autostart);
       setDataPath(settings.dataPath);
     }).catch((reason) => setError(message(reason)));
+  }, [revision]);
+
+  useEffect(() => {
+    void Promise.all([api.listWorkLogs(null), api.listSubprojects(null)])
+      .then(([logs, nextSubs]) => {
+        setWorkLogs(logs);
+        setSubs(nextSubs);
+      })
+      .catch((reason) => setError(message(reason)));
   }, [revision]);
 
   async function testConnection() {
@@ -42,10 +67,32 @@ export function Settings({ revision }: { revision: number }) {
     }
   }
 
+  async function loadDemo() {
+    if (loadingDemo) return;
+    setLoadingDemo(true);
+    setNote("");
+    setError("");
+    try {
+      await api.loadDemo();
+      window.dispatchEvent(new Event("desk-changed"));
+      setNote("已清空现有数据并重新写入示例数据。");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setLoadingDemo(false);
+    }
+  }
+
+  const subName = (id: number) => {
+    const sub = subs.find((item) => item.id === id);
+    if (!sub) return "未知子任务";
+    return `${sub.projectName} · ${sub.name}`;
+  };
+
   return (
     <section>
       <h1>设置</h1>
-      <p className="lead">模型只在 AI 辅助整理临时任务、今日三件和对上「我正在做的事」时调用。切换结论仍由规则给出。钥匙放在系统凭据里。</p>
+      <p className="lead">模型用于待办关联项目、今日三件建议、周回顾摘要和阻塞问询话术。钥匙放在系统凭据里。</p>
       <ErrorText text={error} />
       <div className="stack">
         <label className="field">接口地址<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
@@ -93,12 +140,39 @@ export function Settings({ revision }: { revision: number }) {
           <button onClick={() => void api.checkReminders().then((reminder) => {
             setNote(reminder ? `已弹出：${reminder.title}` : "现在没有到点的提醒。");
           }).catch((reason) => setError(message(reason)))}>立即检查提醒</button>
+          <button type="button" disabled={loadingDemo} onClick={() => void loadDemo()}>
+            {loadingDemo ? "加载中…" : "重新加载示例数据"}
+          </button>
         </div>
         {testing && <AiBusy label="正在检测模型连接" />}
         {note && <p className="note" style={{ whiteSpace: "pre-wrap" }}>{note}</p>}
         <p className="note">数据文件：{dataPath}</p>
+        <p className="note">点「重新加载示例数据」会清空当前业务数据，再写入一套模拟数据。模型地址与钥匙会保留。</p>
         <p className="note">关掉主窗口后程序仍在托盘里。右下角图标可以重新打开，或退出。</p>
       </div>
+
+      <section className="project-section" style={{ marginTop: 28 }}>
+        <div className="section-head">
+          <h2>操作日志</h2>
+          <span className="section-count">{workLogs.length}</span>
+        </div>
+        <p className="note">关键进展与调整进度时的工作日志都在这里。</p>
+        {workLogs.length === 0 ? (
+          <Empty text="还没有操作日志。" />
+        ) : (
+          <ul className="log-history">
+            {workLogs.map((log) => (
+              <li key={log.id}>
+                <span>
+                  {logStamp(log)} · {subName(log.subprojectId)}
+                  {log.kind === "work" ? " · 工作日志" : " · 关键进展"}
+                </span>
+                {log.body.trim() || "（无文字）"}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </section>
   );
 }

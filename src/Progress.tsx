@@ -87,7 +87,7 @@ export function Progress({
 
   return (
     <section>
-      <h1>进度</h1>
+      <h1>进度总览</h1>
       <p className="lead">大项目只记数量。进度条在每个常规子任务上：已完成是满的，未开始是空的，进行中用写下的百分比。</p>
       <ErrorText text={error} />
       <div className="stats">
@@ -120,7 +120,7 @@ export function Progress({
                   {row.children.map((sub) => {
                     const current = stage(sub);
                     const percent = knownPercent(sub);
-                    const latest = logs.find((log) => log.subprojectId === sub.id);
+                    const latest = logs.find((log) => log.subprojectId === sub.id && log.kind !== "work");
                     const label = current === "periodic"
                       ? "周期性"
                       : current === "done"

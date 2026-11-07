@@ -83,10 +83,9 @@ pub fn set_project_status(
     state: State<'_, AppData>,
     id: i64,
     status: String,
-    pause_project_id: Option<i64>,
 ) -> Result<db::Project, String> {
     let conn = connection(&state)?;
-    db::set_project_status(&conn, id, &status, pause_project_id)
+    db::set_project_status(&conn, id, &status)
 }
 
 #[tauri::command]
@@ -124,6 +123,16 @@ pub fn set_subproject_due(
 }
 
 #[tauri::command]
+pub fn set_subproject_repeat(
+    state: State<'_, AppData>,
+    id: i64,
+    repeat_days: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_repeat(&conn, id, &repeat_days)
+}
+
+#[tauri::command]
 pub fn set_subproject_reminder(
     state: State<'_, AppData>,
     id: i64,
@@ -153,6 +162,17 @@ pub fn rename_subproject(
 ) -> Result<db::Subproject, String> {
     let conn = connection(&state)?;
     db::rename_subproject(&conn, id, &name)
+}
+
+#[tauri::command]
+pub fn update_subproject(
+    state: State<'_, AppData>,
+    id: i64,
+    name: String,
+    description: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::update_subproject(&conn, id, &name, &description)
 }
 
 #[tauri::command]
@@ -198,6 +218,53 @@ pub fn delete_work_log(state: State<'_, AppData>, id: i64) -> Result<(), String>
 }
 
 #[tauri::command]
+pub fn list_idea_tags(state: State<'_, AppData>, subproject_id: i64) -> Result<Vec<db::IdeaTag>, String> {
+    let conn = connection(&state)?;
+    db::list_idea_tags(&conn, subproject_id)
+}
+
+#[tauri::command]
+pub fn add_idea_tag(
+    state: State<'_, AppData>,
+    subproject_id: i64,
+    body: String,
+    color: String,
+    pos_x: f64,
+    pos_y: f64,
+) -> Result<db::IdeaTag, String> {
+    let conn = connection(&state)?;
+    db::add_idea_tag(&conn, subproject_id, &body, &color, pos_x, pos_y)
+}
+
+#[tauri::command]
+pub fn update_idea_tag(
+    state: State<'_, AppData>,
+    id: i64,
+    body: String,
+    color: String,
+) -> Result<db::IdeaTag, String> {
+    let conn = connection(&state)?;
+    db::update_idea_tag(&conn, id, &body, &color)
+}
+
+#[tauri::command]
+pub fn move_idea_tag(
+    state: State<'_, AppData>,
+    id: i64,
+    pos_x: f64,
+    pos_y: f64,
+) -> Result<db::IdeaTag, String> {
+    let conn = connection(&state)?;
+    db::move_idea_tag(&conn, id, pos_x, pos_y)
+}
+
+#[tauri::command]
+pub fn delete_idea_tag(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::delete_idea_tag(&conn, id)
+}
+
+#[tauri::command]
 pub fn set_subproject_status(
     state: State<'_, AppData>,
     id: i64,
@@ -227,9 +294,21 @@ pub fn capture(state: State<'_, AppData>, title: String) -> Result<Item, String>
 }
 
 #[tauri::command]
+pub fn capture_inbox(state: State<'_, AppData>, title: String) -> Result<Item, String> {
+    let conn = connection(&state)?;
+    db::capture_inbox(&conn, &title)
+}
+
+#[tauri::command]
 pub fn save_item(state: State<'_, AppData>, draft: ItemDraft) -> Result<Item, String> {
     let conn = connection(&state)?;
     db::save_item(&conn, &draft)
+}
+
+#[tauri::command]
+pub fn set_todo_done(state: State<'_, AppData>, id: i64, done: bool) -> Result<Item, String> {
+    let conn = connection(&state)?;
+    db::set_todo_done(&conn, id, done)
 }
 
 #[tauri::command]
@@ -272,12 +351,6 @@ pub fn today_board(state: State<'_, AppData>) -> Result<db::TodayBoard, String> 
 pub fn weekly_packet(state: State<'_, AppData>) -> Result<db::WeeklyPacket, String> {
     let conn = connection(&state)?;
     db::weekly_packet(&conn)
-}
-
-#[tauri::command]
-pub fn limits(state: State<'_, AppData>) -> Result<db::Limits, String> {
-    let conn = connection(&state)?;
-    db::limits(&conn)
 }
 
 #[tauri::command]
@@ -347,6 +420,46 @@ pub async fn resolve_reminder(app: AppHandle, state: State<'_, AppData>, text: S
     db::apply_resolution(&conn, &text, follow, view.matched_item_id, &view.match_source, &judgment)?;
     let _ = app.emit("desk://changed", ());
     Ok(view)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderTargetView {
+    page: String,
+    project_id: Option<i64>,
+    subproject_id: Option<i64>,
+}
+
+#[tauri::command]
+pub fn open_reminder_detail(app: AppHandle, state: State<'_, AppData>) -> Result<ReminderTargetView, String> {
+    let conn = connection(&state)?;
+    let target = db::reminder_target(&conn)?;
+    drop(conn);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    let view = ReminderTargetView {
+        page: target.page.clone(),
+        project_id: target.project_id,
+        subproject_id: target.subproject_id,
+    };
+    let _ = app.emit("desk://open", &view);
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn postpone_reminder_due(
+    app: AppHandle,
+    state: State<'_, AppData>,
+    minutes: Option<i64>,
+    at: Option<String>,
+) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::postpone_reminder_due(&conn, minutes, at.as_deref())?;
+    let _ = app.emit("desk://changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -438,6 +551,14 @@ pub async fn ai_weekly(state: State<'_, AppData>) -> Result<ai::WeeklyResult, St
     let config = ai::load_config(&conn)?;
     drop(conn);
     Ok(ai::weekly(config, &packet).await)
+}
+
+#[tauri::command]
+pub fn load_demo(app: AppHandle, state: State<'_, AppData>) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::load_demo(&conn)?;
+    let _ = app.emit("desk://changed", ());
+    Ok(())
 }
 
 async fn judge_reminder(state: &State<'_, AppData>, text: &str) -> Result<(JudgmentView, judge::Judgment), String> {

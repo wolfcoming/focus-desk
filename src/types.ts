@@ -12,7 +12,7 @@ export type Subproject = {
   projectId: number;
   projectName: string;
   name: string;
-  doneCriteria: string;
+  description: string;
   targetDate: string | null;
   status: string;
   lastTouchedAt: string;
@@ -35,8 +35,30 @@ export type WorkLog = {
   body: string;
   progress: string;
   progressPercent: number | null;
+  /** work=调整进度时的工作日志；key=关键进展 */
+  kind: string;
   createdAt: string;
 };
+
+export type IdeaTag = {
+  id: number;
+  subprojectId: number;
+  body: string;
+  color: string;
+  sortOrder: number;
+  /** 标签板内位置，百分比 0–100，以便签中心为准 */
+  posX: number;
+  posY: number;
+  zIndex: number;
+  createdAt: string;
+};
+
+export const IDEA_TAG_COLORS = [
+  { value: "soft", label: "雾蓝" },
+  { value: "amber", label: "暖杏" },
+  { value: "mint", label: "薄荷" },
+  { value: "rose", label: "浅玫" },
+] as const;
 
 export type Item = {
   id: number;
@@ -106,6 +128,8 @@ export type Suggested = { item: Item; reason: string };
 export type TodayBoard = {
   day: string;
   slots: Item[];
+  completedCount: number;
+  todos: Item[];
   dailies: DailyView[];
   chores: Item[];
   suggestions: Suggested[];
@@ -117,13 +141,6 @@ export type WeeklyPacket = {
   followUps: Item[];
   undatedImportant: Item[];
   overrides: { createdAt: string; rawText: string; reason: string; verdict: string }[];
-};
-
-export type Limits = {
-  activeProjects: number;
-  activeSubprojects: number;
-  projectCap: number;
-  subprojectCap: number;
 };
 
 export type Reminder = {
