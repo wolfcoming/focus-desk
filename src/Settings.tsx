@@ -75,7 +75,7 @@ export function Settings({ revision }: { revision: number }) {
     try {
       await api.loadDemo();
       window.dispatchEvent(new Event("desk-changed"));
-      setNote("已加载示例数据。");
+      setNote("已清空现有数据并重新写入示例数据。");
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -92,7 +92,7 @@ export function Settings({ revision }: { revision: number }) {
   return (
     <section>
       <h1>设置</h1>
-      <p className="lead">模型用于待办关联项目、今日三件建议、周回顾摘要、阻塞问询话术，以及对上「我正在做的事」。要不要切换仍由本地规则决定。钥匙放在系统凭据里。</p>
+      <p className="lead">模型用于待办关联项目、今日三件建议、周回顾摘要和阻塞问询话术。钥匙放在系统凭据里。</p>
       <ErrorText text={error} />
       <div className="stack">
         <label className="field">接口地址<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
@@ -141,13 +141,13 @@ export function Settings({ revision }: { revision: number }) {
             setNote(reminder ? `已弹出：${reminder.title}` : "现在没有到点的提醒。");
           }).catch((reason) => setError(message(reason)))}>立即检查提醒</button>
           <button type="button" disabled={loadingDemo} onClick={() => void loadDemo()}>
-            {loadingDemo ? "加载中…" : "加载示例数据"}
+            {loadingDemo ? "加载中…" : "重新加载示例数据"}
           </button>
         </div>
         {testing && <AiBusy label="正在检测模型连接" />}
         {note && <p className="note" style={{ whiteSpace: "pre-wrap" }}>{note}</p>}
         <p className="note">数据文件：{dataPath}</p>
-        <p className="note">新库默认是空的。示例数据只会在你点「加载示例数据」时写入一次。</p>
+        <p className="note">点「重新加载示例数据」会清空当前业务数据，再写入一套模拟数据。模型地址与钥匙会保留。</p>
         <p className="note">关掉主窗口后程序仍在托盘里。右下角图标可以重新打开，或退出。</p>
       </div>
 

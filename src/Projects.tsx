@@ -55,17 +55,41 @@ function repeatLabel(value: string | null) {
   return days.length ? `周${days.join("、")}` : "未选重复日";
 }
 
-function subMeta(sub: Subproject) {
+function subMetaTags(sub: Subproject) {
   if (sub.kind === "periodic") {
-    const state = sub.status === "paused" ? "暂停 · " : "";
-    return `${state}周期性 · ${repeatLabel(sub.repeatDays)} · ${sub.remindAt ? `${sub.remindAt} 提醒` : "不定时提醒"}`;
+    const tags = [
+      sub.status === "paused" ? { tone: "paused", label: "暂停" } : null,
+      { tone: "periodic", label: "周期性" },
+      { tone: "periodic", label: repeatLabel(sub.repeatDays) },
+      { tone: "periodic", label: sub.remindAt ? `${sub.remindAt} 提醒` : "不定时提醒" },
+    ];
+    return tags.filter(Boolean) as { tone: string; label: string }[];
   }
+  const tone = sub.status === "paused"
+    ? "paused"
+    : (sub.progress === "doing" || sub.progress === "done" || sub.progress === "not_started" ? sub.progress : "not_started");
   const progress = sub.status === "paused"
     ? "暂停"
     : (progressLabel[sub.progress] ?? subStatus[sub.status]);
   const percent = sub.status !== "paused" && sub.progress === "doing" && sub.progressPercent != null ? ` ${sub.progressPercent}%` : "";
   const quadrant = sub.quadrant ?? (sub.important == null ? "" : sub.important ? "重要" : "不重要");
-  return `${progress}${percent}${quadrant ? ` · ${quadrant}` : ""}${sub.dueAt ? ` · 截止 ${when(sub.dueAt)}` : ""}`;
+  const tags = [
+    { tone, label: `${progress}${percent}` },
+    quadrant ? { tone, label: quadrant } : null,
+    sub.dueAt ? { tone, label: `截止 ${when(sub.dueAt)}` } : null,
+  ];
+  return tags.filter(Boolean) as { tone: string; label: string }[];
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M6.5 2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1V3h3.5a.5.5 0 0 1 0 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a.5.5 0 0 1 0-1H6.5V2zm1 1h1V2h-1v1zM4 4v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4H4zm2.5 2a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5a.5.5 0 0 1 .5-.5zm3 0a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5a.5.5 0 0 1 .5-.5z"
+      />
+    </svg>
+  );
 }
 
 function subDetailFacts(sub: Subproject) {
@@ -214,14 +238,13 @@ export function Projects({
   const [doneOpen, setDoneOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [keyProgressOpen, setKeyProgressOpen] = useState(false);
-  const [ideaOpen, setIdeaOpen] = useState(false);
-  const [ideaDraft, setIdeaDraft] = useState({ body: "", color: "soft" });
-  const [editingIdeaId, setEditingIdeaId] = useState<number | null>(null);
   const [subTodoTitle, setSubTodoTitle] = useState("");
-  const [placingIdea, setPlacingIdea] = useState<{ body: string; color: string } | null>(null);
+  const [placingIdea, setPlacingIdea] = useState<{ color: string } | null>(null);
   const [placingPos, setPlacingPos] = useState({ x: 50, y: 40 });
   const [draggingIdeaId, setDraggingIdeaId] = useState<number | null>(null);
+  const [focusIdeaId, setFocusIdeaId] = useState<number | null>(null);
   const ideaBoardRef = useRef<HTMLDivElement | null>(null);
+  const ideaInputRefs = useRef<Map<number, HTMLTextAreaElement>>(new Map());
   const ideaDragRef = useRef<{
     id: number;
     originX: number;
@@ -232,6 +255,7 @@ export function Projects({
   } | null>(null);
   const ideaTagsRef = useRef(ideaTags);
   ideaTagsRef.current = ideaTags;
+  const ideaSavedBodyRef = useRef<Map<number, string>>(new Map());
   const [editingInfo, setEditingInfo] = useState(false);
 
   async function load() {
@@ -315,10 +339,9 @@ export function Projects({
     setError("");
     setOpenSubId(sub.id);
     setLogsOpen(false);
-    setIdeaOpen(false);
-    setEditingIdeaId(null);
     setPlacingIdea(null);
     setDraggingIdeaId(null);
+    setFocusIdeaId(null);
     ideaDragRef.current = null;
     setSubTodoTitle("");
     setEditingInfo(false);
@@ -351,10 +374,9 @@ export function Projects({
   useEffect(() => {
     setDoneOpen(false);
     setLogsOpen(false);
-    setIdeaOpen(false);
-    setEditingIdeaId(null);
     setPlacingIdea(null);
     setDraggingIdeaId(null);
+    setFocusIdeaId(null);
     ideaDragRef.current = null;
   }, [selectedId]);
 
@@ -363,13 +385,17 @@ export function Projects({
       setIdeaTags([]);
       setPlacingIdea(null);
       setDraggingIdeaId(null);
+      setFocusIdeaId(null);
       ideaDragRef.current = null;
+      ideaSavedBodyRef.current = new Map();
       return;
     }
     let cancelled = false;
     void api.listIdeaTags(openSubId)
       .then((tags) => {
-        if (!cancelled) setIdeaTags(tags);
+        if (cancelled) return;
+        setIdeaTags(tags);
+        ideaSavedBodyRef.current = new Map(tags.map((tag) => [tag.id, tag.body]));
       })
       .catch((reason) => {
         if (!cancelled) setError(message(reason));
@@ -390,8 +416,32 @@ export function Projects({
     return () => window.removeEventListener("keydown", onKey);
   }, [placingIdea]);
 
-  function beginIdeaDrag(tag: IdeaTag, event: ReactPointerEvent<HTMLButtonElement>) {
+  useEffect(() => {
+    if (focusIdeaId == null) return;
+    let cancelled = false;
+    const tryFocus = () => {
+      if (cancelled) return;
+      const input = ideaInputRefs.current.get(focusIdeaId);
+      if (!input) {
+        requestAnimationFrame(tryFocus);
+        return;
+      }
+      if (document.activeElement !== input) {
+        input.focus();
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+      }
+    };
+    tryFocus();
+    return () => {
+      cancelled = true;
+    };
+  }, [focusIdeaId]);
+
+  function beginIdeaDrag(tag: IdeaTag, event: ReactPointerEvent<HTMLElement>) {
     if (placingIdea || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button")) return;
+    if (focusIdeaId === tag.id && (event.target as HTMLElement).closest("textarea")) return;
     event.preventDefault();
     event.stopPropagation();
     ideaDragRef.current = {
@@ -424,16 +474,7 @@ export function Projects({
       const board = ideaBoardRef.current;
       ideaDragRef.current = null;
       setDraggingIdeaId(null);
-      if (!drag || !board) return;
-      if (!drag.moved) {
-        const tag = ideaTagsRef.current.find((item) => item.id === drag.id);
-        if (tag) {
-          setEditingIdeaId(tag.id);
-          setIdeaDraft({ body: tag.body, color: tag.color });
-          setIdeaOpen(true);
-        }
-        return;
-      }
+      if (!drag || !board || !drag.moved) return;
       const point = ideaBoardPercent(board, upEvent.clientX, upEvent.clientY);
       void api.moveIdeaTag(drag.id, point.x, point.y)
         .then((next) => {
@@ -450,23 +491,50 @@ export function Projects({
     window.addEventListener("pointerup", onUp);
   }
 
+  function startPlacingIdea(color: string) {
+    if (busy) return;
+    setFocusIdeaId(null);
+    setPlacingIdea({ color });
+    setPlacingPos({ x: 50, y: 40 });
+  }
+
   async function placeIdeaAt(clientX: number, clientY: number) {
     if (!placingIdea || openSubId == null || busy) return;
     const board = ideaBoardRef.current;
     if (!board) return;
     const point = ideaBoardPercent(board, clientX, clientY);
-    const draft = placingIdea;
+    const color = placingIdea.color;
     setBusy(true);
     try {
-      const created = await api.addIdeaTag(openSubId, draft.body, draft.color, point.x, point.y);
+      const created = await api.addIdeaTag(openSubId, "", color, point.x, point.y);
+      ideaSavedBodyRef.current.set(created.id, created.body);
       setIdeaTags((tags) => [...tags, created]);
       setPlacingIdea(null);
+      setFocusIdeaId(created.id);
       setError("");
     } catch (reason) {
       setError(message(reason));
     } finally {
       setBusy(false);
     }
+  }
+
+  function saveIdeaBody(id: number, color: string, body: string) {
+    const nextBody = body.trim();
+    if (ideaSavedBodyRef.current.get(id) === nextBody) {
+      if (body !== nextBody) {
+        setIdeaTags((tags) => tags.map((item) => (
+          item.id === id ? { ...item, body: nextBody } : item
+        )));
+      }
+      return;
+    }
+    void api.updateIdeaTag(id, nextBody, color)
+      .then((next) => {
+        ideaSavedBodyRef.current.set(next.id, next.body);
+        setIdeaTags((tags) => tags.map((item) => (item.id === next.id ? next : item)));
+      })
+      .catch((reason) => setError(message(reason)));
   }
 
   const mine = current ? subs.filter((sub) => sub.projectId === current.id) : [];
@@ -489,54 +557,57 @@ export function Projects({
     ? logs.filter((log) => log.subprojectId === opened.id && log.kind !== "work")
     : [];
 
-  function moveSub(list: Subproject[], index: number, dir: -1 | 1) {
-    if (!current) return;
-    const target = list[index + dir];
-    if (!target) return;
-    const ordered = mine.map((item) => item.id);
-    const from = ordered.indexOf(list[index].id);
-    const to = ordered.indexOf(target.id);
-    if (from < 0 || to < 0) return;
-    [ordered[from], ordered[to]] = [ordered[to], ordered[from]];
+  function pinSubTop(list: Subproject[], id: number) {
+    if (!current || list[0]?.id === id) return;
+    const ordered = mine.map((item) => item.id).filter((item) => item !== id);
+    const insertAt = ordered.indexOf(list[0].id);
+    if (insertAt < 0) return;
+    ordered.splice(insertAt, 0, id);
     void run(() => api.reorderSubprojects(current.id, ordered));
   }
 
-  function renderSubRows(list: Subproject[], reorder: boolean) {
+  function renderSubRows(list: Subproject[], canPin: boolean) {
     return (
       <div className="list">
-        {list.map((sub, index) => (
-          <article className="row sub-row" key={sub.id}>
-            <button type="button" className="row-open" onClick={() => openSub(sub)}>
-              <h3>{sub.name}</h3>
-              <div className="meta">{subMeta(sub)}</div>
-            </button>
-            <div className="actions row-tools">
-              {reorder && (
-                <>
+        {list.map((sub, index) => {
+          const done = progressOf(sub) === "done";
+          return (
+            <article className={done ? "row sub-row done" : "row sub-row"} key={sub.id}>
+              <button type="button" className="row-open" onClick={() => openSub(sub)}>
+                <h3>{sub.name}</h3>
+                <div className="sub-meta">
+                  {subMetaTags(sub).map((tag) => (
+                    <span className={`sub-tag ${tag.tone}`} key={`${tag.tone}-${tag.label}`}>
+                      <span className="sub-tag-dot" />
+                      {tag.label}
+                    </span>
+                  ))}
+                </div>
+              </button>
+              <div className="actions row-tools">
+                {canPin && index > 0 && (
                   <button
                     type="button"
-                    className="quiet"
-                    disabled={busy || index === 0}
-                    aria-label="上移"
-                    onClick={() => moveSub(list, index, -1)}
+                    className="quiet pin-top"
+                    disabled={busy}
+                    aria-label="置顶"
+                    onClick={() => pinSubTop(list, sub.id)}
                   >
-                    ↑
+                    置顶
                   </button>
-                  <button
-                    type="button"
-                    className="quiet"
-                    disabled={busy || index === list.length - 1}
-                    aria-label="下移"
-                    onClick={() => moveSub(list, index, 1)}
-                  >
-                    ↓
-                  </button>
-                </>
-              )}
-              <button type="button" className="quiet tree-delete" onClick={() => { setError(""); setDeleteSub(sub); }}>删除</button>
-            </div>
-          </article>
-        ))}
+                )}
+                <button
+                  type="button"
+                  className="quiet row-delete"
+                  aria-label="删除"
+                  onClick={() => { setError(""); setDeleteSub(sub); }}
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            </article>
+          );
+        })}
       </div>
     );
   }
@@ -586,7 +657,7 @@ export function Projects({
                 <h1>{current.name}</h1>
               </div>
               <div className="actions project-header-actions">
-                <button type="button" className="quiet tree-delete" onClick={() => onAskDelete(current)}>删除项目</button>
+                <button type="button" className="quiet project-delete" onClick={() => onAskDelete(current)}>删除项目</button>
               </div>
             </div>
             <p className="lead">{current.outcome || "还没有写描述。"}</p>
@@ -628,7 +699,7 @@ export function Projects({
                 )}
               </>
             )}
-            <button type="button" className="add-inline" onClick={openCreate}>新建子任务</button>
+            <button type="button" className="add-inline" onClick={openCreate}>+ 新建子任务</button>
           </section>
 
           <section className="project-section">
@@ -997,26 +1068,24 @@ export function Projects({
             <div className="section-head">
               <h2>灵感标签板</h2>
               <span className="section-count">{ideaTags.length}</span>
-              <button
-                type="button"
-                className="quiet section-edit"
-                disabled={placingIdea != null}
-                onClick={() => {
-                  setEditingIdeaId(null);
-                  setIdeaDraft({ body: "", color: "soft" });
-                  setIdeaOpen(true);
-                }}
-              >
-                添加
-              </button>
             </div>
-            <p className="note idea-board-hint">
-              {placingIdea
-                ? "便签会跟着鼠标，在板上点一下放下。按 Esc 取消。"
-                : ideaTags.length === 0
-                  ? "写好内容后选颜色，便签会跟鼠标；点板上放下。之后可拖动，叠在一起也没关系。"
-                  : "拖动便签可换位置；点一下可编辑。"}
-            </p>
+            <div className="idea-board-palette" role="group" aria-label="添加灵感标签">
+              {IDEA_TAG_COLORS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`idea-swatch idea-color-${option.value}${placingIdea?.color === option.value ? " selected" : ""}`}
+                  disabled={busy}
+                  title={`添加${option.label}便签`}
+                  aria-label={`添加${option.label}便签`}
+                  aria-pressed={placingIdea?.color === option.value}
+                  onClick={() => startPlacingIdea(option.value)}
+                />
+              ))}
+              {placingIdea && (
+                <span className="idea-board-hint-inline">点板上放下，Esc 取消</span>
+              )}
+            </div>
             <div
               ref={ideaBoardRef}
               className={`idea-board${placingIdea ? " placing" : ""}${draggingIdeaId != null ? " dragging" : ""}`}
@@ -1034,32 +1103,80 @@ export function Projects({
               }}
             >
               {ideaTags.length === 0 && !placingIdea && (
-                <div className="idea-board-empty">点右上角「添加」贴一张灵感</div>
+                <div className="idea-board-empty">点上方色块贴一张灵感</div>
               )}
               {ideaTags.map((tag) => (
-                <button
-                  type="button"
+                <div
                   key={tag.id}
-                  className={`idea-card idea-color-${tag.color}${draggingIdeaId === tag.id ? " dragging" : ""}`}
+                  className={`idea-card idea-color-${tag.color}${draggingIdeaId === tag.id ? " dragging" : ""}${focusIdeaId === tag.id ? " editing" : ""}`}
                   style={{
                     left: `${tag.posX}%`,
                     top: `${tag.posY}%`,
-                    zIndex: draggingIdeaId === tag.id ? 999 : Math.max(1, tag.zIndex),
+                    zIndex: draggingIdeaId === tag.id || focusIdeaId === tag.id ? 999 : Math.max(1, tag.zIndex),
                   }}
-                  title={when(tag.createdAt)}
                   onPointerDown={(event) => beginIdeaDrag(tag, event)}
+                  onDoubleClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    setFocusIdeaId(tag.id);
+                  }}
                 >
-                  <span className="idea-card-body">{tag.body}</span>
-                  <span className="idea-card-time">{when(tag.createdAt)}</span>
-                </button>
+                  <button
+                    type="button"
+                    className="idea-card-delete"
+                    aria-label="删除便签"
+                    onClick={() => {
+                      void run(async () => {
+                        await api.deleteIdeaTag(tag.id);
+                        ideaSavedBodyRef.current.delete(tag.id);
+                        setIdeaTags((tags) => tags.filter((item) => item.id !== tag.id));
+                        if (focusIdeaId === tag.id) setFocusIdeaId(null);
+                      });
+                    }}
+                  >
+                    <span aria-hidden>×</span>
+                  </button>
+                  {focusIdeaId === tag.id ? (
+                    <textarea
+                      className="idea-card-body"
+                      rows={2}
+                      placeholder="写点灵感…"
+                      value={tag.body}
+                      aria-label="灵感内容"
+                      ref={(node) => {
+                        if (node) ideaInputRefs.current.set(tag.id, node);
+                        else ideaInputRefs.current.delete(tag.id);
+                      }}
+                      onChange={(event) => {
+                        const body = event.target.value;
+                        setIdeaTags((tags) => tags.map((item) => (
+                          item.id === tag.id ? { ...item, body } : item
+                        )));
+                      }}
+                      onBlur={(event) => {
+                        const body = event.target.value;
+                        setFocusIdeaId(null);
+                        saveIdeaBody(tag.id, tag.color, body);
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div className={`idea-card-body${tag.body.trim() ? "" : " empty"}`}>
+                      {tag.body.trim() || "写点灵感…"}
+                    </div>
+                  )}
+                </div>
               ))}
               {placingIdea && (
                 <div
                   className={`idea-card idea-color-${placingIdea.color} ghost`}
                   style={{ left: `${placingPos.x}%`, top: `${placingPos.y}%`, zIndex: 1000 }}
                 >
-                  <span className="idea-card-body">{placingIdea.body}</span>
-                  <span className="idea-card-time">点击放下</span>
+                  <span className="idea-card-body">写点灵感…</span>
                 </div>
               )}
             </div>
@@ -1071,7 +1188,7 @@ export function Projects({
               <span className="section-count">{subTodos.length}</span>
             </div>
             <form
-              className="todo-compose sub-todo-compose"
+              className="todo-compose"
               onSubmit={(event) => {
                 event.preventDefault();
                 const nextTitle = subTodoTitle.trim();
@@ -1131,100 +1248,6 @@ export function Projects({
               <div className="actions">
                 <button type="button" className="primary" onClick={() => setLogsOpen(false)}>关闭</button>
               </div>
-            </Dialog>
-          )}
-
-          {ideaOpen && (
-            <Dialog
-              title={editingIdeaId == null ? "添加灵感标签" : "编辑灵感标签"}
-              onClose={() => {
-                setIdeaOpen(false);
-                setEditingIdeaId(null);
-                setIdeaDraft({ body: "", color: "soft" });
-              }}
-            >
-              <form
-                className="stack"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const body = ideaDraft.body.trim();
-                  if (!body) return;
-                  if (editingIdeaId == null) {
-                    setIdeaOpen(false);
-                    setPlacingIdea({ body, color: ideaDraft.color });
-                    setPlacingPos({ x: 50, y: 40 });
-                    setIdeaDraft({ body: "", color: "soft" });
-                    return;
-                  }
-                  void run(async () => {
-                    await api.updateIdeaTag(editingIdeaId, body, ideaDraft.color);
-                    setIdeaTags(await api.listIdeaTags(opened.id));
-                    setIdeaOpen(false);
-                    setEditingIdeaId(null);
-                    setIdeaDraft({ body: "", color: "soft" });
-                  });
-                }}
-              >
-                <Field label="灵感">
-                  <textarea
-                    rows={4}
-                    autoFocus
-                    placeholder="突然想到的一句、一个方向、一个提醒"
-                    value={ideaDraft.body}
-                    onChange={(event) => setIdeaDraft({ ...ideaDraft, body: event.target.value })}
-                  />
-                </Field>
-                <Field label="颜色">
-                  <div className="idea-color-picks" role="group" aria-label="标签颜色">
-                    {IDEA_TAG_COLORS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`idea-color-pick idea-color-${option.value}${ideaDraft.color === option.value ? " selected" : ""}`}
-                        aria-pressed={ideaDraft.color === option.value}
-                        onClick={() => setIdeaDraft({ ...ideaDraft, color: option.value })}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </Field>
-                <div className="actions">
-                  <button className="primary" type="submit" disabled={busy || !ideaDraft.body.trim()}>
-                    {busy ? "正在保存…" : editingIdeaId == null ? "选色并放置" : "保存"}
-                  </button>
-                  {editingIdeaId != null && (
-                    <button
-                      type="button"
-                      className="quiet tree-delete"
-                      disabled={busy}
-                      onClick={() => {
-                        const id = editingIdeaId;
-                        void run(async () => {
-                          await api.deleteIdeaTag(id);
-                          setIdeaTags(await api.listIdeaTags(opened.id));
-                          setIdeaOpen(false);
-                          setEditingIdeaId(null);
-                          setIdeaDraft({ body: "", color: "soft" });
-                        });
-                      }}
-                    >
-                      删除
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="quiet"
-                    onClick={() => {
-                      setIdeaOpen(false);
-                      setEditingIdeaId(null);
-                      setIdeaDraft({ body: "", color: "soft" });
-                    }}
-                  >
-                    取消
-                  </button>
-                </div>
-              </form>
             </Dialog>
           )}
 

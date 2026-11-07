@@ -3,7 +3,6 @@ import type {
   ClarifyResult,
   Item,
   ItemDraft,
-  Judgment,
   MorningResult,
   Project,
   Reminder,
@@ -96,8 +95,6 @@ export const api = {
     autostart: boolean;
   }) => invoke<SettingsView>("save_settings", { input }),
   activeReminder: () => invoke<Reminder | null>("active_reminder"),
-  previewJudgment: (text: string) => invoke<Judgment>("preview_judgment", { text }),
-  resolveReminder: (text: string, follow: boolean) => invoke<Judgment>("resolve_reminder", { text, follow }),
   acknowledgeReminder: () => invoke<void>("acknowledge_reminder"),
   openReminderDetail: () =>
     invoke<{ page: string; projectId: number | null; subprojectId: number | null }>("open_reminder_detail"),

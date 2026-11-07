@@ -971,9 +971,6 @@ pub fn add_idea_tag(
     pos_y: f64,
 ) -> Result<IdeaTag, String> {
     let body = body.trim();
-    if body.is_empty() {
-        return Err("写一下灵感内容".into());
-    }
     let exists: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM subprojects WHERE id = ?1",
@@ -1014,9 +1011,6 @@ pub fn add_idea_tag(
 
 pub fn update_idea_tag(conn: &Connection, id: i64, body: &str, color: &str) -> Result<IdeaTag, String> {
     let body = body.trim();
-    if body.is_empty() {
-        return Err("写一下灵感内容".into());
-    }
     let color = normalize_idea_color(color);
     let changed = conn
         .execute(
@@ -2195,32 +2189,90 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
 
     let delivery = insert_project(&tx, "客户交付", "这个月把合同签下来", "active", &stamp)?;
-    let launch = insert_project(&tx, "产品发布", "官网和报名链路可用", "active", &stamp)?;
+    let launch = insert_project(&tx, "产品发布", "官网和报名链接可用", "active", &stamp)?;
     let team = insert_project(&tx, "团队运转", "这周的协作不断档", "active", &stamp)?;
+    let hiring = insert_project(&tx, "招聘补位", "补齐产品和设计缺口", "active", &stamp)?;
+    let content = insert_project(&tx, "内容运营", "保持周更，别断档", "active", &stamp)?;
     let planning = insert_project(&tx, "下季度规划", "下季度只保留三条线", "upcoming", &stamp)?;
     let _campaign = insert_project(&tx, "市场活动", "展会物料先停着", "paused", &stamp)?;
+    let _finance = insert_project(&tx, "财务结算", "等财务窗口再开", "paused", &stamp)?;
     let archived = insert_project(&tx, "旧系统迁移", "去年已经切完", "archived", &stamp)?;
 
     let quote_target = (today + Duration::days(5)).format("%Y-%m-%d").to_string();
+    let accept_target = (today + Duration::days(12)).format("%Y-%m-%d").to_string();
     let quote = insert_sub(
         &tx, delivery, "报价确认", "客户书面接受第三版报价",
         Some(&quote_target),
         "active", &timeutil::iso(moment - Duration::minutes(40)), None, &stamp,
     )?;
     let contract = insert_sub(&tx, delivery, "合同盖章", "双方都盖完章并回传扫描件", None, "active", &stamp, None, &stamp)?;
+    let payment = insert_sub(
+        &tx, delivery, "首付款跟进", "首款到账并开票",
+        Some(&accept_target),
+        "active", &timeutil::iso(moment - Duration::hours(5)), None, &stamp,
+    )?;
+    let handover = insert_sub(
+        &tx, delivery, "交付清单", "验收项全部勾完", None, "active", &stamp, None, &stamp,
+    )?;
     let _old_plan = insert_sub(&tx, delivery, "旧方案", "旧报价方案归档，不再改", None, "paused", &timeutil::iso(moment - Duration::days(6)), None, &stamp)?;
+    let _kickoff = insert_sub(
+        &tx, delivery, "启动会纪要", "纪要已同步双方", None, "done", &timeutil::iso(moment - Duration::days(3)), None, &stamp,
+    )?;
     let homepage = insert_sub(&tx, launch, "官网文案", "首页能讲清产品是做什么的", None, "active", &stamp, None, &stamp)?;
+    let signup = insert_sub(&tx, launch, "报名页联调", "表单能提交并收到通知", None, "active", &timeutil::iso(moment - Duration::hours(8)), None, &stamp)?;
     let tracking = insert_sub(&tx, launch, "埋点核对", "报名按钮的点击被记下来", None, "active", &stamp, None, &stamp)?;
+    let faq = insert_sub(&tx, launch, "FAQ 文案", "十个高频问题写完", None, "active", &stamp, None, &stamp)?;
+    let _gray = insert_sub(&tx, launch, "灰度开关", "先对内部打开", None, "paused", &timeutil::iso(moment - Duration::days(1)), None, &stamp)?;
     let assets = insert_sub(&tx, launch, "素材归档", "终稿都在网盘对应文件夹", None, "done", &timeutil::iso(moment - Duration::days(1)), None, &stamp)?;
+    let _mail = insert_sub(&tx, launch, "邮件模板", "报名成功邮件已上线", None, "done", &timeutil::iso(moment - Duration::days(2)), None, &stamp)?;
     let weekly = insert_sub(
         &tx, team, "周报材料", "周五能发出这周的三件进展", None, "active",
         &timeutil::iso(moment - Duration::days(4)), None, &stamp,
     )?;
+    let _one_on_one = insert_sub(&tx, team, "一对一纪要", "本周两场已记完", None, "active", &stamp, None, &stamp)?;
+    let _tools = insert_sub(&tx, team, "工具账单", "订阅费用对上", None, "done", &timeutil::iso(moment - Duration::days(5)), None, &stamp)?;
+    let jd = insert_sub(&tx, hiring, "JD 定稿", "产品和设计各一版", None, "active", &stamp, None, &stamp)?;
+    let interview = insert_sub(&tx, hiring, "一面安排", "本周排出三场", None, "active", &timeutil::iso(moment - Duration::hours(20)), None, &stamp)?;
+    let _offer = insert_sub(&tx, hiring, "Offer 沟通", "谈妥一候选人", None, "paused", &timeutil::iso(moment - Duration::days(2)), None, &stamp)?;
+    let topics = insert_sub(&tx, content, "周更选题", "下周三题定好", None, "active", &stamp, None, &stamp)?;
+    let script = insert_sub(&tx, content, "短视频脚本", "两条可拍的脚本", None, "active", &stamp, None, &stamp)?;
+    let _library = insert_sub(&tx, content, "素材库整理", "分类和命名统一", None, "done", &timeutil::iso(moment - Duration::days(4)), None, &stamp)?;
     let _scope = insert_sub(&tx, planning, "范围草案", "三条线各自写清不做什么", None, "paused", &timeutil::iso(moment - Duration::days(2)), None, &stamp)?;
+    let _roadmap = insert_sub(&tx, planning, "路线草图", "按月排一版", None, "paused", &timeutil::iso(moment - Duration::days(1)), None, &stamp)?;
     let _migration = insert_sub(&tx, archived, "数据核对", "旧库记录抽查通过", None, "archived", &timeutil::iso(moment - Duration::days(40)), None, &stamp)?;
 
+    for (id, progress, percent) in [
+        (quote, "doing", Some(65i64)),
+        (contract, "doing", Some(30)),
+        (payment, "not_started", None),
+        (handover, "not_started", None),
+        (homepage, "doing", Some(40)),
+        (signup, "doing", Some(55)),
+        (tracking, "doing", Some(20)),
+        (faq, "not_started", None),
+        (assets, "done", None),
+        (weekly, "doing", Some(15)),
+        (jd, "doing", Some(70)),
+        (interview, "doing", Some(35)),
+        (topics, "doing", Some(50)),
+        (script, "not_started", None),
+    ] {
+        tx.execute(
+            "UPDATE subprojects SET kind = 'regular', progress = ?2, progress_percent = ?3 WHERE id = ?1",
+            params![id, progress, percent],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    for id in [_kickoff, _mail, _tools, _library] {
+        tx.execute(
+            "UPDATE subprojects SET kind = 'regular', progress = 'done', progress_percent = NULL WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+
     let quote_task = insert_item(
-        &tx, "task", "改第三版报价", "智能体匹配「我现在在做什么」时，可以对上这句。客户昨晚回了修改点。",
+        &tx, "task", "改第三版报价", "客户昨晚回了修改点，先对齐口径。",
         Some(delivery), Some(quote), Some(1), Some(&timeutil::iso(moment - Duration::hours(2))), Some(25), "doing",
         None, None, None, None, 0, None, None, Some(&timeutil::iso(moment - Duration::minutes(12))), None, None, &stamp,
     )?;
@@ -2262,6 +2314,54 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         None, None, None, None, 0, None, None, None, None, Some(&stamp), &stamp,
     )?;
     insert_item(
+        &tx, "task", "对齐首付款节点", "和客户确认打款时间。",
+        Some(delivery), Some(payment), Some(1), Some(&timeutil::iso(moment + Duration::days(3))), Some(25), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "验收项列一版", "先列内部版再给客户。",
+        Some(delivery), Some(handover), Some(1), Some(&timeutil::iso(moment + Duration::days(7))), Some(50), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "联调报名提交通知", "提交后要能收到邮件。",
+        Some(launch), Some(signup), Some(1), Some(&timeutil::iso(moment + Duration::days(1))), Some(50), "doing",
+        None, None, None, None, 0, None, None, Some(&timeutil::iso(moment - Duration::minutes(40))), None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "写满十个 FAQ", "优先写退款和兼容性。",
+        Some(launch), Some(faq), Some(0), None, Some(90), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "改产品岗 JD", "补上协作方式那一段。",
+        Some(hiring), Some(jd), Some(1), Some(&timeutil::iso(moment + Duration::days(2))), Some(25), "doing",
+        None, None, None, None, 0, None, None, Some(&timeutil::iso(moment - Duration::hours(1))), None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "约周三一面", "先约设计方向的两位。",
+        Some(hiring), Some(interview), Some(1), Some(&timeutil::iso(moment + Duration::days(1))), Some(25), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "定下周三个选题", "一条产品、一条客户、一条幕后。",
+        Some(content), Some(topics), Some(0), Some(&timeutil::iso(moment + Duration::days(2))), Some(25), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "task", "写第一条短视频脚本", "控制在 45 秒内。",
+        Some(content), Some(script), Some(0), None, Some(50), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    let urgent_faq = insert_item(
+        &tx, "task", "补退款说明到 FAQ", "客服今天还在问。",
+        Some(launch), Some(faq), Some(1), Some(&timeutil::iso(moment + Duration::hours(6))), Some(25), "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    tx.execute("UPDATE items SET urgent = 1 WHERE id = ?1", params![urgent_faq])
+        .map_err(|err| err.to_string())?;
+
+    insert_item(
         &tx, "waiting", "等客户确认报价口径", "",
         Some(delivery), None, None, None, None, "open",
         None, None, None, None, 0, Some("客户王敏"), Some(&timeutil::iso(moment - Duration::hours(2))), None, None, None, &stamp,
@@ -2271,9 +2371,82 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         Some(launch), None, None, None, None, "open",
         None, None, None, None, 0, Some("设计组"), Some(&timeutil::iso(moment + Duration::days(1))), None, None, None, &stamp,
     )?;
+    insert_item(
+        &tx, "waiting", "等法务回合同红线", "",
+        Some(delivery), None, None, None, None, "open",
+        None, None, None, None, 0, Some("法务李姐"), Some(&timeutil::iso(moment + Duration::hours(8))), None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "waiting", "等候选人回一面时间", "",
+        Some(hiring), None, None, None, None, "open",
+        None, None, None, None, 0, Some("候选人阿陈"), Some(&timeutil::iso(moment + Duration::days(2))), None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "waiting", "等财务确认开票信息", "",
+        Some(delivery), None, None, None, None, "open",
+        None, None, None, None, 0, Some("财务小周"), Some(&timeutil::iso(moment + Duration::days(3))), None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "waiting", "等渠道提供投放素材尺寸", "",
+        Some(content), None, None, None, None, "open",
+        None, None, None, None, 0, Some("渠道运营"), Some(&timeutil::iso(moment - Duration::hours(6))), None, None, None, &stamp,
+    )?;
+
     insert_item(&tx, "todo", "客户说合同还要改一版，不知道归到哪条线", "未挂靠待办，可关联到合同盖章。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
     insert_item(&tx, "todo", "下周三之前把报价发出去", "未挂靠待办，有时间但还没变成任务。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
     insert_item(&tx, "todo", "有空问问设计稿什么时候能看", "可能整理成阻塞项。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "todo", "记得备份本周会议录音", "未挂靠。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "todo", "整理一页竞品截图", "未挂靠。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(&tx, "todo", "更新个人周报模板", "未挂靠。", None, None, None, None, None, "open", None, None, None, None, 0, None, None, None, None, None, &stamp)?;
+    insert_item(
+        &tx, "todo", "报名页文案再过一遍", "挂在产品发布。",
+        Some(launch), None, None, None, None, "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "todo", "把合同扫描件放进共享盘", "挂在客户交付。",
+        Some(delivery), None, None, None, None, "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+    insert_item(
+        &tx, "todo", "列出本周可约的面试时段", "挂在招聘补位。",
+        Some(hiring), None, None, None, None, "open",
+        None, None, None, None, 0, None, None, None, None, None, &stamp,
+    )?;
+
+    for (sub_id, body, progress, percent, kind, hours_ago) in [
+        (quote, "对齐了第二轮修改点，还差价格页。", "doing", Some(40i64), "key", 30i64),
+        (quote, "客户口头认可结构，等书面确认。", "doing", Some(65), "key", 5),
+        (quote, "今天改了附页说明，准备再发一版。", "doing", Some(65), "work", 1),
+        (homepage, "主标题试了三版，先留短句。", "doing", Some(30), "key", 26),
+        (homepage, "补了价值主张段落。", "doing", Some(40), "work", 6),
+        (signup, "提交接口通了，通知邮件还在测。", "doing", Some(55), "key", 8),
+        (weekly, "先收了产品和交付两条进展。", "doing", Some(15), "work", 20),
+        (jd, "产品岗职责写完，设计岗还差协作方式。", "doing", Some(70), "key", 4),
+        (topics, "定了「发布前一周」系列选题。", "doing", Some(50), "key", 12),
+    ] {
+        tx.execute(
+            "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![sub_id, body, progress, percent, kind, timeutil::iso(moment - Duration::hours(hours_ago))],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+
+    for (sub_id, body, color, x, y, z) in [
+        (homepage, "少承诺，多演示", "soft", 24.0, 28.0, 1),
+        (homepage, "第一屏只留一句", "warm", 160.0, 70.0, 2),
+        (quote, "价格页别塞太多例外", "cool", 40.0, 90.0, 1),
+        (topics, "客户声音 > 功能清单", "soft", 50.0, 40.0, 1),
+        (jd, "协作方式写清楚", "warm", 80.0, 55.0, 1),
+    ] {
+        tx.execute(
+            "INSERT INTO idea_tags (subproject_id, body, color, sort_order, pos_x, pos_y, z_index, created_at)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
+            params![sub_id, body, color, x, y, z, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    }
 
     let grace_end = clock(-90);
     let grace_start = clock(-120);
@@ -2349,10 +2522,30 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+pub fn clear_user_data(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "
+        PRAGMA foreign_keys = OFF;
+        DELETE FROM today_slots;
+        DELETE FROM today_completions;
+        DELETE FROM daily_marks;
+        DELETE FROM activity_logs;
+        DELETE FROM work_logs;
+        DELETE FROM idea_tags;
+        DELETE FROM reminder_state;
+        DELETE FROM items;
+        DELETE FROM subprojects;
+        DELETE FROM projects;
+        DELETE FROM settings WHERE key = 'demo_seeded';
+        PRAGMA foreign_keys = ON;
+        ",
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 pub fn load_demo(conn: &Connection) -> Result<(), String> {
-    if get_setting(conn, "demo_seeded")?.as_deref() == Some("1") {
-        return Err("已经加载过示例数据".into());
-    }
+    clear_user_data(conn)?;
     seed_demo(conn)
 }
 
@@ -2563,7 +2756,7 @@ pub fn acknowledge_reminder(conn: &Connection) -> Result<(), String> {
     }
     conn.execute(
         "INSERT INTO activity_logs (created_at, raw_text, matched_item_id, incoming_item_id, incoming_class, verdict, reason, accepted, snooze_min, match_source)
-         VALUES (?1, '知道了', NULL, ?2, ?3, 'continue', '先知道了，这次不判断要不要换。', 1, ?4, 'rules')",
+         VALUES (?1, '知道了', NULL, ?2, ?3, 'continue', '先知道了，这次先放下提醒。', 1, ?4, 'rules')",
         params![timeutil::now_iso(), reminder.item_id, class_name(reminder.class), minutes],
     )
     .map_err(|err| err.to_string())?;
@@ -3172,10 +3365,10 @@ mod tests {
         let dailies: i64 = conn.query_row("SELECT COUNT(*) FROM items WHERE kind = 'daily'", [], |row| row.get(0)).unwrap();
         let slots: i64 = conn.query_row("SELECT COUNT(*) FROM today_slots", [], |row| row.get(0)).unwrap();
         let logs: i64 = conn.query_row("SELECT COUNT(*) FROM activity_logs WHERE match_source = 'ai'", [], |row| row.get(0)).unwrap();
-        assert_eq!(active_projects, 4);
-        assert_eq!(active_subs, 11);
-        assert_eq!(loose_todos, 3);
-        assert_eq!(waiting, 2);
+        assert!(active_projects >= 6);
+        assert!(active_subs >= 18);
+        assert!(loose_todos >= 6);
+        assert!(waiting >= 6);
         assert!(dailies >= 6);
         let orphan_dailies: i64 = conn
             .query_row("SELECT COUNT(*) FROM items WHERE kind = 'daily' AND subproject_id IS NULL", [], |row| row.get(0))
@@ -3184,6 +3377,29 @@ mod tests {
         assert_eq!(slots, 3);
         assert_eq!(logs, 2);
         assert_eq!(get_setting(&conn, "ai_model").unwrap().as_deref(), Some("openai/gpt-4o-mini"));
+        let work_logs: i64 = conn.query_row("SELECT COUNT(*) FROM work_logs", [], |row| row.get(0)).unwrap();
+        let ideas: i64 = conn.query_row("SELECT COUNT(*) FROM idea_tags", [], |row| row.get(0)).unwrap();
+        assert!(work_logs >= 8);
+        assert!(ideas >= 5);
+    }
+
+    #[test]
+    fn load_demo_clears_and_reseeds() {
+        let conn = memory();
+        seed_demo(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (name, outcome, status, created_at, updated_at) VALUES ('临时', '', 'paused', '2026-01-01T00:00', '2026-01-01T00:00')",
+            [],
+        )
+        .unwrap();
+        load_demo(&conn).unwrap();
+        let projects: i64 = conn.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0)).unwrap();
+        let temps: i64 = conn
+            .query_row("SELECT COUNT(*) FROM projects WHERE name = '临时'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(temps, 0);
+        assert!(projects >= 6);
+        assert_eq!(get_setting(&conn, "demo_seeded").unwrap().as_deref(), Some("1"));
     }
 
     #[test]

@@ -95,9 +95,9 @@ function Shell() {
 
           <div className="nav-divider" role="separator" aria-hidden />
 
-          <div className="nav-group">
+          <div className="nav-group nav-group-projects">
             <div className="nav-label">项目</div>
-            <div className="tree tree-flat">
+            <div className="tree tree-flat nav-projects-scroll">
               {projectRows.filter((project) => project.status !== "archived").map((project) => (
                 <button
                   key={project.id}
@@ -108,13 +108,13 @@ function Shell() {
                   <span className="tree-name">{project.name}</span>
                 </button>
               ))}
-              <button type="button" className="tree-add" onClick={() => { setCreateProject(true); }}>新建项目</button>
             </div>
+            <button type="button" className="tree-add" onClick={() => { setCreateProject(true); }}>新建项目</button>
           </div>
 
           <div className="nav-divider" role="separator" aria-hidden />
 
-          <div className="nav-group">
+          <div className="nav-group nav-group-footer">
             <div className="nav-label">其他</div>
             {navButton("progress", "进度总览")}
             {navButton("weekly", "周回顾")}

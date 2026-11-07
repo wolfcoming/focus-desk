@@ -140,10 +140,10 @@ export function ProjectBlocked({
                 <div className="meta">在等 {item.waitingOn} · {when(item.followUpAt)}</div>
               </div>
               <div className="actions row-tools">
-                <button type="button" className="quiet" onClick={() => void run(() => api.bumpFollowUp(item.id, 1))}>明天再问</button>
+                <button type="button" className="action-link" onClick={() => void run(() => api.bumpFollowUp(item.id, 1))}>明天再问</button>
                 <button
                   type="button"
-                  className="quiet"
+                  className="action-link"
                   onClick={() => {
                     setError("");
                     setScriptItem(item);
@@ -155,7 +155,7 @@ export function ProjectBlocked({
                 >
                   话术
                 </button>
-                <button type="button" onClick={() => void run(() => api.completeItem(item.id))}>结束</button>
+                <button type="button" className="action-end" onClick={() => void run(() => api.completeItem(item.id))}>结束</button>
               </div>
             </article>
           ))}
@@ -170,7 +170,7 @@ export function ProjectBlocked({
           setOpen(true);
         }}
       >
-        新建阻塞项
+        + 新建阻塞项
       </button>
 
       {open && (
