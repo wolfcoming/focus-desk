@@ -1,0 +1,36 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: focus-desk-sync
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/focus_desk?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USER:focus_desk}
+    password: ${DB_PASSWORD:focus_desk_change_me}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:change-me-to-a-long-random-secret-at-least-32-chars}
+    expire-hours: ${JWT_EXPIRE_HOURS:720}
+  admin:
+    email: ${ADMIN_EMAIL:admin@focusdesk.local}
+    password: ${ADMIN_PASSWORD:FocusAdmin123}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    org.springframework.security: WARN

@@ -62,32 +62,17 @@ struct ChatReply {
 }
 
 pub fn has_api_key() -> Result<bool, String> {
-    let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|err| err.to_string())?;
-    match entry.get_password() {
-        Ok(value) => Ok(!value.trim().is_empty()),
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(err) => Err(err.to_string()),
-    }
+    crate::secret::has(SERVICE, ACCOUNT)
 }
 
 pub fn set_api_key(value: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|err| err.to_string())?;
-    if value.trim().is_empty() {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(err) => Err(err.to_string()),
-        }
-    } else {
-        entry.set_password(value.trim()).map_err(|err| err.to_string())
-    }
+    crate::secret::set(SERVICE, ACCOUNT, value)
 }
 
 pub fn load_config(conn: &rusqlite::Connection) -> Result<Option<AiConfig>, String> {
-    if !has_api_key()? {
+    let Some(api_key) = crate::secret::get(SERVICE, ACCOUNT)? else {
         return Ok(None);
-    }
-    let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|err| err.to_string())?;
-    let api_key = entry.get_password().map_err(|err| err.to_string())?;
+    };
     let base_url = db::get_setting(conn, "ai_base_url")?
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "https://api.openai.com/v1".into());

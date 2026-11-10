@@ -179,7 +179,24 @@ export type SettingsView = {
   model: string;
   hasApiKey: boolean;
   autostart: boolean;
+  supportsAutostart: boolean;
   dataPath: string;
+};
+
+export type SyncStatusView = {
+  baseUrl: string;
+  email: string | null;
+  signedIn: boolean;
+  lastSyncAt: string | null;
+  cursor: string | null;
+};
+
+export type SyncResultView = {
+  pushed: number;
+  pulled: number;
+  accepted: number;
+  rejected: number;
+  serverTime: string;
 };
 
 export const projectStatus: Record<string, string> = {

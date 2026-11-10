@@ -376,6 +376,65 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     ensure_column(conn, "idea_tags", "pos_x", "REAL NOT NULL DEFAULT 20")?;
     ensure_column(conn, "idea_tags", "pos_y", "REAL NOT NULL DEFAULT 20")?;
     ensure_column(conn, "idea_tags", "z_index", "INTEGER NOT NULL DEFAULT 0")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_ids (
+           collection TEXT NOT NULL,
+           local_id INTEGER NOT NULL,
+           client_id TEXT NOT NULL UNIQUE,
+           PRIMARY KEY (collection, local_id)
+         );",
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn sync_client_id(conn: &Connection, collection: &str, local_id: i64) -> Result<String, String> {
+    if let Some(existing) = conn
+        .query_row(
+            "SELECT client_id FROM sync_ids WHERE collection = ?1 AND local_id = ?2",
+            params![collection, local_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+    {
+        return Ok(existing);
+    }
+    let client_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO sync_ids (collection, local_id, client_id) VALUES (?1, ?2, ?3)",
+        params![collection, local_id, client_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(client_id)
+}
+
+pub fn sync_local_id(conn: &Connection, collection: &str, client_id: &str) -> Result<Option<i64>, String> {
+    conn.query_row(
+        "SELECT local_id FROM sync_ids WHERE collection = ?1 AND client_id = ?2",
+        params![collection, client_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|err| err.to_string())
+}
+
+pub fn sync_bind(conn: &Connection, collection: &str, local_id: i64, client_id: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO sync_ids (collection, local_id, client_id) VALUES (?1, ?2, ?3)
+         ON CONFLICT(collection, local_id) DO UPDATE SET client_id = excluded.client_id",
+        params![collection, local_id, client_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn sync_unbind_client(conn: &Connection, collection: &str, client_id: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = ?1 AND client_id = ?2",
+        params![collection, client_id],
+    )
+    .map_err(|err| err.to_string())?;
     Ok(())
 }
 

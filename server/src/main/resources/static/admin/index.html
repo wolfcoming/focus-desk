@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Little Fun 管理后台</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --side: #1f2933;
+      --side-text: #d9e2ec;
+      --line: #e4e7eb;
+      --text: #1f2933;
+      --muted: #627d98;
+      --card: #fff;
+      --accent: #1d4e89;
+      --danger: #ba2525;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.5 "Segoe UI", "PingFang SC", sans-serif; color: var(--text); background: var(--bg); }
+    button, input, select { font: inherit; }
+    #login {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #243b53;
+    }
+    .login-card {
+      width: 360px;
+      background: #fff;
+      padding: 28px 24px;
+      border-radius: 8px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.2);
+    }
+    .login-card h1 { margin: 0 0 6px; font-size: 20px; }
+    .login-card p { margin: 0 0 18px; color: var(--muted); }
+    label { display: block; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+    input, select {
+      width: 100%;
+      margin-top: 4px;
+      padding: 8px 10px;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      background: #fff;
+    }
+    button {
+      border: 1px solid #bcccdc;
+      background: #fff;
+      border-radius: 6px;
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button.danger { color: var(--danger); border-color: #f5c2c2; background: #fff5f5; }
+    button:disabled { opacity: .6; cursor: default; }
+    .error { color: var(--danger); min-height: 20px; margin: 0 0 8px; }
+    #app { display: none; min-height: 100vh; }
+    .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+    aside { background: var(--side); color: var(--side-text); padding: 20px 14px; }
+    aside h1 { margin: 0 16px 18px; font-size: 16px; color: #fff; }
+    nav button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      color: var(--side-text);
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 12px;
+      margin-bottom: 4px;
+    }
+    nav button.active { background: #334e68; color: #fff; }
+    .side-foot { margin-top: 24px; padding: 0 12px; font-size: 12px; color: #9fb3c8; }
+    main { padding: 22px 28px 40px; }
+    header.bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    header.bar h2 { margin: 0; font-size: 20px; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .card, .panel { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+    .card { padding: 14px 16px; }
+    .card span { display: block; color: var(--muted); font-size: 12px; }
+    .card strong { font-size: 24px; }
+    .panel { padding: 14px 16px; margin-bottom: 16px; }
+    .panel h3 { margin: 0 0 10px; font-size: 15px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    .filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .filters input, .filters select { width: 220px; margin: 0; }
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); }
+    .tag { display: inline-block; padding: 1px 6px; border-radius: 999px; background: #e4e7eb; font-size: 12px; }
+    .tag.admin { background: #d9e8f6; color: #1d4e89; }
+    .tag.off { background: #fce8e8; color: var(--danger); }
+    .modal {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, .45);
+      display: none; place-items: center; padding: 20px;
+    }
+    .modal.show { display: grid; }
+    .dialog { width: min(720px, 100%); max-height: 80vh; overflow: auto; background: #fff; border-radius: 8px; padding: 16px 18px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #f8fafc; padding: 12px; border-radius: 6px; }
+    .row-actions { display: flex; gap: 6px; white-space: nowrap; }
+    .content strong { display: block; font-weight: 650; }
+    .content .sub { color: var(--muted); margin-top: 2px; white-space: pre-wrap; }
+    .kv { display: grid; grid-template-columns: 88px 1fr; gap: 8px 12px; margin: 0; }
+    .kv dt { color: var(--muted); }
+    .kv dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    tr.clickable { cursor: pointer; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: 1fr 1fr; }
+      aside { padding-bottom: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <section id="login">
+    <form class="login-card" id="login-form">
+      <h1>Little Fun 管理后台</h1>
+      <p>查看同步用户与云端记录。</p>
+      <p class="error" id="login-error"></p>
+      <label>邮箱<input id="email" type="email" autocomplete="username" required /></label>
+      <label>密码<input id="password" type="password" autocomplete="current-password" required /></label>
+      <button class="primary" type="submit" id="login-btn">登录</button>
+    </form>
+  </section>
+
+  <div id="app">
+    <div class="layout">
+      <aside>
+        <h1>Little Fun</h1>
+        <nav>
+          <button type="button" data-page="overview" class="active">概览</button>
+          <button type="button" data-page="users">用户</button>
+          <button type="button" data-page="records">同步记录</button>
+        </nav>
+        <div class="side-foot" id="who"></div>
+        <div class="side-foot"><button type="button" id="logout">退出</button></div>
+      </aside>
+      <main>
+        <section data-view="overview">
+          <header class="bar"><h2>概览</h2><button type="button" id="refresh-overview">刷新</button></header>
+          <div class="cards" id="stats"></div>
+          <div class="panel">
+            <h3>按类型</h3>
+            <table><thead><tr><th>类型</th><th>条数</th></tr></thead><tbody id="buckets"></tbody></table>
+          </div>
+          <div class="panel">
+            <h3>最近变更</h3>
+            <table>
+              <thead><tr><th>时间</th><th>用户</th><th>类型</th><th>内容</th></tr></thead>
+              <tbody id="recent"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section data-view="users" hidden>
+          <header class="bar"><h2>用户</h2></header>
+          <div class="filters">
+            <input id="user-q" placeholder="搜索邮箱" />
+            <button type="button" id="user-search">搜索</button>
+          </div>
+          <div class="panel">
+            <table>
+              <thead><tr><th>邮箱</th><th>角色</th><th>记录</th><th>注册时间</th><th></th></tr></thead>
+              <tbody id="user-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section data-view="records" hidden>
+          <header class="bar"><h2>同步记录</h2></header>
+          <div class="filters">
+            <select id="rec-collection">
+              <option value="">全部类型</option>
+              <option>projects</option>
+              <option>subprojects</option>
+              <option>items</option>
+              <option>work_logs</option>
+              <option>idea_tags</option>
+              <option>today_slots</option>
+              <option>today_completions</option>
+              <option>daily_marks</option>
+            </select>
+            <input id="rec-q" placeholder="搜索 clientId 或类型" />
+            <button type="button" id="rec-search">搜索</button>
+          </div>
+          <div class="panel">
+            <table>
+              <thead><tr><th>时间</th><th>用户</th><th>类型</th><th>内容</th><th></th></tr></thead>
+              <tbody id="rec-rows"></tbody>
+            </table>
+            <div class="pager">
+              <button type="button" id="prev">上一页</button>
+              <span id="page-label"></span>
+              <button type="button" id="next">下一页</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="dialog">
+      <header class="bar"><h2 id="modal-title">详情</h2><button type="button" id="modal-close">关闭</button></header>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "focusdesk_admin_token";
+    const EMAIL_KEY = "focusdesk_admin_email";
+    const labels = {
+      projects: "项目",
+      subprojects: "子任务",
+      items: "待办",
+      work_logs: "进展",
+      idea_tags: "灵感便签",
+      today_slots: "今日三件",
+      today_completions: "今日完成",
+      daily_marks: "每日打卡"
+    };
+    let page = 0;
+    let total = 0;
+    const size = 20;
+
+    const $ = (id) => document.getElementById(id);
+
+    function token() { return localStorage.getItem(TOKEN_KEY) || ""; }
+
+    async function api(path, options = {}) {
+      const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
+      if (token()) headers.Authorization = "Bearer " + token();
+      const response = await fetch(path, Object.assign({}, options, { headers }));
+      const text = await response.text();
+      let body = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { error: text }; }
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          if (!path.endsWith("/login")) signOut();
+        }
+        throw new Error((body && body.error) || ("请求失败 " + response.status));
+      }
+      return body;
+    }
+
+    function when(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function label(collection) { return labels[collection] || collection; }
+
+    const fieldLabels = {
+      name: "名称",
+      title: "标题",
+      body: "内容",
+      notes: "备注",
+      outcome: "要达成的结果",
+      description: "说明",
+      status: "状态",
+      kind: "类型",
+      progress: "进度",
+      progressPercent: "完成度",
+      important: "重要",
+      urgent: "紧急",
+      dueAt: "截止时间",
+      targetDate: "目标日期",
+      waitingOn: "在等谁",
+      followUpAt: "跟进时间",
+      repeatDays: "重复",
+      color: "颜色",
+      createdAt: "创建时间",
+      updatedAt: "更新时间",
+      lastTouchedAt: "最近触碰"
+    };
+    const statusLabels = { open: "未完成", doing: "进行中", done: "已完成", dropped: "已放弃", not_started: "未开始" };
+    const kindLabels = { todo: "待办", task: "任务", daily: "每日", waiting: "等待", work: "工作日志", milestone: "关键进展" };
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    function payloadOf(record) {
+      const payload = record.payload;
+      if (!payload) return {};
+      if (typeof payload === "string") {
+        try { return JSON.parse(payload); } catch { return { body: payload }; }
+      }
+      return payload;
+    }
+
+    function showValue(key, value) {
+      if (value == null || value === "") return "";
+      if (key === "status" || key === "progress") return statusLabels[value] || String(value);
+      if (key === "kind") return kindLabels[value] || String(value);
+      if (key === "important" || key === "urgent") return value ? "是" : "否";
+      if (key === "progressPercent") return `${value}%`;
+      if (typeof value === "string" && value.includes("T") && value.includes("-")) return when(value);
+      return String(value);
+    }
+
+    function headline(record) {
+      if (record.deleted) return "已删除";
+      const payload = payloadOf(record);
+      return payload.title || payload.name || payload.body || "（无标题）";
+    }
+
+    function detailLine(record) {
+      if (record.deleted) return "";
+      const payload = payloadOf(record);
+      const bits = [];
+      if (payload.notes) bits.push(payload.notes);
+      if (payload.description && payload.description !== payload.name) bits.push(payload.description);
+      if (payload.outcome) bits.push(payload.outcome);
+      if (payload.body && payload.body !== headline(record)) bits.push(payload.body);
+      if (payload.status) bits.push(showValue("status", payload.status));
+      if (payload.progress) bits.push(showValue("progress", payload.progress));
+      if (payload.progressPercent != null) bits.push(showValue("progressPercent", payload.progressPercent));
+      return bits.filter(Boolean).join(" · ");
+    }
+
+    function contentCell(record) {
+      const extra = detailLine(record);
+      return `<div class="content"><strong>${esc(headline(record))}</strong>${extra ? `<div class="sub">${esc(extra)}</div>` : ""}</div>`;
+    }
+
+    function detailHtml(record) {
+      const payload = payloadOf(record);
+      const rows = Object.keys(fieldLabels)
+        .filter((key) => payload[key] != null && payload[key] !== "")
+        .map((key) => `<dt>${fieldLabels[key]}</dt><dd>${esc(showValue(key, payload[key]))}</dd>`)
+        .join("");
+      return `<p>${esc(record.email || "")} · ${esc(when(record.updatedAt))}</p><dl class="kv">${rows || "<dt>内容</dt><dd>（空）</dd>"}</dl>`;
+    }
+
+    function signOut() {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(EMAIL_KEY);
+      $("app").style.display = "none";
+      $("login").style.display = "grid";
+    }
+
+    function showApp() {
+      $("login").style.display = "none";
+      $("app").style.display = "block";
+      $("who").textContent = localStorage.getItem(EMAIL_KEY) || "";
+      show("overview");
+    }
+
+    function show(name) {
+      document.querySelectorAll("[data-view]").forEach((node) => {
+        node.hidden = node.getAttribute("data-view") !== name;
+      });
+      document.querySelectorAll("nav button").forEach((node) => {
+        node.classList.toggle("active", node.dataset.page === name);
+      });
+      if (name === "overview") loadOverview();
+      if (name === "users") loadUsers();
+      if (name === "records") loadRecords();
+    }
+
+    function openModal(title, html) {
+      $("modal-title").textContent = title;
+      $("modal-body").innerHTML = html;
+      $("modal").classList.add("show");
+    }
+
+    async function loadOverview() {
+      const data = await api("/api/v1/admin/overview");
+      const cards = [
+        ["用户", data.users],
+        ["同步记录", data.records],
+        ["已删除", data.deleted],
+        ["类型", (data.collections || []).length]
+      ];
+      $("stats").innerHTML = cards.map(([name, value]) => `<div class="card"><span>${name}</span><strong>${value}</strong></div>`).join("");
+      $("buckets").innerHTML = (data.collections || []).map((item) => `<tr><td>${label(item.collection)}</td><td>${item.count}</td></tr>`).join("") || `<tr><td colspan="2">还没有记录</td></tr>`;
+      $("recent").innerHTML = (data.recent || []).map((item) => `<tr class="clickable" data-open-rec="${item.id}"><td>${when(item.updatedAt)}</td><td>${esc(item.email || item.userId)}</td><td>${label(item.collection)}</td><td>${contentCell(item)}</td></tr>`).join("") || `<tr><td colspan="4">还没有记录</td></tr>`;
+      window.__recent = data.recent || [];
+    }
+
+    async function loadUsers() {
+      const q = encodeURIComponent($("user-q").value.trim());
+      const rows = await api("/api/v1/admin/users?q=" + q);
+      $("user-rows").innerHTML = rows.map((user) => `
+        <tr>
+          <td>${user.email}</td>
+          <td><span class="tag ${user.role === "ADMIN" ? "admin" : ""}">${user.role === "ADMIN" ? "管理员" : "用户"}</span></td>
+          <td>${user.records}</td>
+          <td>${when(user.createdAt)}</td>
+          <td class="row-actions">
+            <button type="button" data-reset="${user.id}" data-email="${user.email}">重置密码</button>
+            <button type="button" class="danger" data-del-user="${user.id}">删除</button>
+          </td>
+        </tr>`).join("") || `<tr><td colspan="5">没有用户</td></tr>`;
+    }
+
+    async function loadRecords() {
+      const params = new URLSearchParams({
+        collection: $("rec-collection").value,
+        q: $("rec-q").value.trim(),
+        page: String(page),
+        size: String(size)
+      });
+      const data = await api("/api/v1/admin/records?" + params.toString());
+      total = data.total;
+      $("rec-rows").innerHTML = (data.items || []).map((item) => `
+        <tr class="clickable" data-open-rec="${item.id}">
+          <td>${when(item.updatedAt)}</td>
+          <td>${esc(item.email || item.userId)}</td>
+          <td>${label(item.collection)}${item.deleted ? ' <span class="tag off">已删除</span>' : ""}</td>
+          <td>${contentCell(item)}</td>
+          <td class="row-actions">
+            <button type="button" data-view-rec="${item.id}">详情</button>
+            <button type="button" class="danger" data-del-rec="${item.id}">删除</button>
+          </td>
+        </tr>`).join("") || `<tr><td colspan="5">没有记录</td></tr>`;
+      const pages = Math.max(1, Math.ceil(total / size));
+      $("page-label").textContent = `第 ${page + 1} / ${pages} 页，共 ${total} 条`;
+      $("prev").disabled = page <= 0;
+      $("next").disabled = (page + 1) * size >= total;
+      window.__records = data.items || [];
+    }
+
+    $("login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      $("login-error").textContent = "";
+      $("login-btn").disabled = true;
+      try {
+        const result = await api("/api/v1/admin/login", {
+          method: "POST",
+          body: JSON.stringify({ email: $("email").value.trim(), password: $("password").value })
+        });
+        localStorage.setItem(TOKEN_KEY, result.token);
+        localStorage.setItem(EMAIL_KEY, result.email);
+        showApp();
+      } catch (error) {
+        $("login-error").textContent = error.message;
+      } finally {
+        $("login-btn").disabled = false;
+      }
+    });
+
+    document.querySelectorAll("nav button").forEach((button) => {
+      button.addEventListener("click", () => show(button.dataset.page));
+    });
+    $("logout").addEventListener("click", signOut);
+    $("refresh-overview").addEventListener("click", () => loadOverview().catch((error) => alert(error.message)));
+    $("user-search").addEventListener("click", () => loadUsers().catch((error) => alert(error.message)));
+    $("rec-search").addEventListener("click", () => { page = 0; loadRecords().catch((error) => alert(error.message)); });
+    $("prev").addEventListener("click", () => { page = Math.max(0, page - 1); loadRecords(); });
+    $("next").addEventListener("click", () => { page += 1; loadRecords(); });
+    $("modal-close").addEventListener("click", () => $("modal").classList.remove("show"));
+    $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) $("modal").classList.remove("show"); });
+
+    document.body.addEventListener("click", async (event) => {
+      const reset = event.target.closest("[data-reset]");
+      const delUser = event.target.closest("[data-del-user]");
+      const view = event.target.closest("[data-view-rec]");
+      const delRec = event.target.closest("[data-del-rec]");
+      try {
+        if (reset) {
+          const password = prompt("为 " + reset.dataset.email + " 设置新密码（至少 8 位）");
+          if (!password) return;
+          await api("/api/v1/admin/users/" + reset.dataset.reset + "/password", {
+            method: "POST",
+            body: JSON.stringify({ password })
+          });
+          alert("密码已重置");
+        }
+        if (delUser) {
+          if (!confirm("删除用户会同时删掉该用户的全部同步记录。")) return;
+          await api("/api/v1/admin/users/" + delUser.dataset.delUser, { method: "DELETE" });
+          await loadUsers();
+        }
+        const openId = view ? view.dataset.viewRec : (event.target.closest("[data-open-rec]") && !event.target.closest("button") ? event.target.closest("[data-open-rec]").dataset.openRec : "");
+        if (openId) {
+          const record = [...(window.__records || []), ...(window.__recent || [])].find((item) => String(item.id) === String(openId));
+          if (!record) return;
+          openModal(label(record.collection), detailHtml(record));
+        }
+        if (delRec) {
+          if (!confirm("删除这条云端记录？客户端下次同步可能再推上来。")) return;
+          await api("/api/v1/admin/records/" + delRec.dataset.delRec, { method: "DELETE" });
+          await loadRecords();
+        }
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    if (token()) showApp();
+  </script>
+</body>
+</html>

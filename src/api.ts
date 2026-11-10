@@ -8,6 +8,8 @@ import type {
   Reminder,
   SettingsView,
   Subproject,
+  SyncResultView,
+  SyncStatusView,
   TodayBoard,
   IdeaTag,
   WorkLog,
@@ -17,6 +19,16 @@ import type {
 export function message(error: unknown) {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const record = error as { message?: unknown; error?: unknown };
+    if (typeof record.message === "string" && record.message.trim()) return record.message;
+    if (typeof record.error === "string" && record.error.trim()) return record.error;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      /* ignore */
+    }
+  }
   return "没有完成";
 }
 
@@ -110,4 +122,12 @@ export const api = {
   followUpLines: (id: number, extra: string | null) =>
     invoke<{ scripts: string[]; thinking: string | null }>("ai_follow_up_lines", { id, extra }),
   loadDemo: () => invoke<void>("load_demo"),
+  syncStatus: () => invoke<SyncStatusView>("get_sync_status"),
+  setSyncBaseUrl: (baseUrl: string) => invoke<SyncStatusView>("set_sync_base_url", { baseUrl }),
+  syncRegister: (email: string, password: string, baseUrl?: string | null) =>
+    invoke<SyncStatusView>("sync_register", { email, password, baseUrl: baseUrl ?? null }),
+  syncLogin: (email: string, password: string, baseUrl?: string | null) =>
+    invoke<SyncStatusView>("sync_login", { email, password, baseUrl: baseUrl ?? null }),
+  syncLogout: () => invoke<SyncStatusView>("sync_logout"),
+  syncNow: () => invoke<SyncResultView>("sync_now"),
 };

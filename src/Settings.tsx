@@ -21,6 +21,7 @@ export function Settings({ revision }: { revision: number }) {
   const [apiKey, setApiKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [autostart, setAutostart] = useState(false);
+  const [supportsAutostart, setSupportsAutostart] = useState(true);
   const [dataPath, setDataPath] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
@@ -28,6 +29,14 @@ export function Settings({ revision }: { revision: number }) {
   const [loadingDemo, setLoadingDemo] = useState(false);
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [subs, setSubs] = useState<Subproject[]>([]);
+  const [syncBaseUrl, setSyncBaseUrl] = useState("http://47.93.153.219:8081");
+  const [syncEmail, setSyncEmail] = useState("");
+  const [syncPassword, setSyncPassword] = useState("");
+  const [syncSignedIn, setSyncSignedIn] = useState(false);
+  const [syncLastAt, setSyncLastAt] = useState<string | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncNote, setSyncNote] = useState("");
+  const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
     void api.settings().then((settings) => {
@@ -35,7 +44,14 @@ export function Settings({ revision }: { revision: number }) {
       setModel(settings.model);
       setHasKey(settings.hasApiKey);
       setAutostart(settings.autostart);
+      setSupportsAutostart(settings.supportsAutostart);
       setDataPath(settings.dataPath);
+    }).catch((reason) => setError(message(reason)));
+    void api.syncStatus().then((status) => {
+      setSyncBaseUrl(status.baseUrl);
+      setSyncEmail(status.email ?? "");
+      setSyncSignedIn(status.signedIn);
+      setSyncLastAt(status.lastSyncAt);
     }).catch((reason) => setError(message(reason)));
   }, [revision]);
 
@@ -83,6 +99,67 @@ export function Settings({ revision }: { revision: number }) {
     }
   }
 
+  async function runSyncAuth(mode: "login" | "register") {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    setSyncNote(mode === "login" ? "正在登录…" : "正在注册…");
+    setSyncError("");
+    try {
+      const status = mode === "login"
+        ? await api.syncLogin(syncEmail.trim(), syncPassword, syncBaseUrl.trim())
+        : await api.syncRegister(syncEmail.trim(), syncPassword, syncBaseUrl.trim());
+      setSyncBaseUrl(status.baseUrl);
+      setSyncEmail(status.email ?? syncEmail.trim());
+      setSyncSignedIn(status.signedIn);
+      setSyncLastAt(status.lastSyncAt);
+      setSyncPassword("");
+      setSyncNote(mode === "login" ? "已登录云端账号。" : "已注册并登录云端账号。");
+    } catch (reason) {
+      setSyncNote("");
+      setSyncError(message(reason));
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  async function runSyncNow() {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    setSyncNote("正在同步…");
+    setSyncError("");
+    try {
+      await api.setSyncBaseUrl(syncBaseUrl.trim());
+      const result = await api.syncNow();
+      const status = await api.syncStatus();
+      setSyncLastAt(status.lastSyncAt);
+      setSyncSignedIn(status.signedIn);
+      window.dispatchEvent(new Event("desk-changed"));
+      setSyncNote(`同步完成：推送 ${result.pushed}，接受 ${result.accepted}，拒绝 ${result.rejected}，拉取 ${result.pulled}。`);
+    } catch (reason) {
+      setSyncNote("");
+      setSyncError(message(reason));
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  async function runSyncLogout() {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    setSyncError("");
+    setSyncNote("正在退出…");
+    try {
+      const status = await api.syncLogout();
+      setSyncSignedIn(status.signedIn);
+      setSyncNote("已退出云端账号。");
+    } catch (reason) {
+      setSyncNote("");
+      setSyncError(message(reason));
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
   const subName = (id: number) => {
     const sub = subs.find((item) => item.id === id);
     if (!sub) return "未知子任务";
@@ -102,10 +179,12 @@ export function Settings({ revision }: { revision: number }) {
           <input type="password" value={apiKey} placeholder={hasKey ? "已保存，留空则不改" : "还没有"} onChange={(event) => setApiKey(event.target.value)} />
         </label>
         <p className="note">{hasKey ? "钥匙已在系统凭据里，这里不再显示原文。留空再保存，不会改掉它。" : "还没有保存过钥匙。"}</p>
-        <label className="checks">
-          <input type="checkbox" checked={autostart} onChange={(event) => setAutostart(event.target.checked)} />
-          登录时启动
-        </label>
+        {supportsAutostart && (
+          <label className="checks">
+            <input type="checkbox" checked={autostart} onChange={(event) => setAutostart(event.target.checked)} />
+            登录时启动
+          </label>
+        )}
         <div className="actions" style={{ justifyContent: "flex-start" }}>
           <button className="primary" onClick={() => void api.saveSettings({
             baseUrl,
@@ -150,6 +229,52 @@ export function Settings({ revision }: { revision: number }) {
         <p className="note">点「重新加载示例数据」会清空当前业务数据，再写入一套模拟数据。模型地址与钥匙会保留。</p>
         <p className="note">关掉主窗口后程序仍在托盘里。右下角图标可以重新打开，或退出。</p>
       </div>
+
+      <section className="project-section" style={{ marginTop: 28 }}>
+        <div className="section-head">
+          <h2>云端同步</h2>
+        </div>
+        <p className="note">把项目、子任务、待办、进展与灵感便签同步到服务器。先登录，再点立即同步。</p>
+        <div className="stack">
+          <label className="field">同步服务地址<input value={syncBaseUrl} onChange={(event) => setSyncBaseUrl(event.target.value)} /></label>
+          <label className="field">邮箱<input value={syncEmail} onChange={(event) => setSyncEmail(event.target.value)} autoComplete="username" /></label>
+          <label className="field">
+            密码
+            <input
+              type="password"
+              value={syncPassword}
+              placeholder={syncSignedIn ? "已登录，改密/重登时再填" : "至少 8 位"}
+              onChange={(event) => setSyncPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          <p className="note">
+            {syncSignedIn
+              ? `已登录${syncEmail ? `：${syncEmail}` : ""}。${syncLastAt ? `上次同步 ${when(syncLastAt)}` : "还没有同步过。"}`
+              : "还没有登录云端账号。"}
+          </p>
+          <ErrorText text={syncError} />
+          {syncNote && <p className="note" style={{ whiteSpace: "pre-wrap" }}>{syncNote}</p>}
+          <div className="actions" style={{ justifyContent: "flex-start" }}>
+            {!syncSignedIn ? (
+              <>
+                <button type="button" className="primary" disabled={syncBusy} onClick={() => void runSyncAuth("login")}>
+                  {syncBusy ? "处理中…" : "登录"}
+                </button>
+                <button type="button" disabled={syncBusy} onClick={() => void runSyncAuth("register")}>注册</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="primary" disabled={syncBusy} onClick={() => void runSyncNow()}>
+                  {syncBusy ? "同步中…" : "立即同步"}
+                </button>
+                <button type="button" disabled={syncBusy} onClick={() => void runSyncAuth("login")}>重新登录</button>
+                <button type="button" className="quiet" disabled={syncBusy} onClick={() => void runSyncLogout()}>退出登录</button>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
 
       <section className="project-section" style={{ marginTop: 28 }}>
         <div className="section-head">

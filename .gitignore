@@ -8,8 +8,11 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+server/.tools
+server/target
 dist
 dist-ssr
+release
 *.local
 
 # Rust / Tauri

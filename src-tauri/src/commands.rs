@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(desktop)]
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
@@ -34,6 +35,7 @@ pub struct SettingsView {
     model: String,
     has_api_key: bool,
     autostart: bool,
+    supports_autostart: bool,
     data_path: String,
 }
 
@@ -57,6 +59,7 @@ pub fn present(app: &AppHandle, reminder: &ReminderView) {
     let _ = app.run_on_main_thread(move || {
         if let Some(window) = app_handle.get_webview_window("reminder") {
             let _ = window.show();
+            #[cfg(desktop)]
             let _ = window.unminimize();
             let _ = window.set_focus();
         }
@@ -366,9 +369,38 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppData>) -> Result<Setting
         base_url: ai::stored_base_url(&conn)?,
         model: ai::stored_model(&conn)?,
         has_api_key: ai::has_api_key()?,
-        autostart: app.autolaunch().is_enabled().unwrap_or(false),
+        autostart: autostart_enabled(&app),
+        supports_autostart: cfg!(desktop),
         data_path: state.db_path.display().to_string(),
     })
+}
+
+fn autostart_enabled(app: &AppHandle) -> bool {
+    #[cfg(desktop)]
+    {
+        return app.autolaunch().is_enabled().unwrap_or(false);
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        false
+    }
+}
+
+fn apply_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if enabled {
+            app.autolaunch().enable().map_err(|err| err.to_string())
+        } else {
+            app.autolaunch().disable().map_err(|err| err.to_string())
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, enabled);
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -393,11 +425,7 @@ pub fn save_settings(app: AppHandle, state: State<'_, AppData>, input: SettingsI
             ai::set_api_key(&key)?;
         }
     }
-    if input.autostart {
-        app.autolaunch().enable().map_err(|err| err.to_string())?;
-    } else {
-        app.autolaunch().disable().map_err(|err| err.to_string())?;
-    }
+    apply_autostart(&app, input.autostart)?;
     get_settings(app, state)
 }
 
@@ -437,6 +465,7 @@ pub fn open_reminder_detail(app: AppHandle, state: State<'_, AppData>) -> Result
     drop(conn);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
+        #[cfg(desktop)]
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
@@ -618,5 +647,62 @@ async fn judge_reminder(state: &State<'_, AppData>, text: &str) -> Result<(Judgm
         thinking,
     };
     Ok((view, judgment))
+}
+
+#[tauri::command]
+pub fn get_sync_status(state: State<'_, AppData>) -> Result<crate::sync::SyncStatusView, String> {
+    let conn = connection(&state)?;
+    crate::sync::status(&conn)
+}
+
+#[tauri::command]
+pub fn set_sync_base_url(state: State<'_, AppData>, base_url: String) -> Result<crate::sync::SyncStatusView, String> {
+    let conn = connection(&state)?;
+    crate::sync::set_base_url(&conn, &base_url)?;
+    crate::sync::status(&conn)
+}
+
+#[tauri::command]
+pub async fn sync_register(
+    state: State<'_, AppData>,
+    email: String,
+    password: String,
+    base_url: Option<String>,
+) -> Result<crate::sync::SyncStatusView, String> {
+    let path = state.db_path.clone();
+    if let Some(url) = base_url {
+        let conn = db::open(&path)?;
+        crate::sync::set_base_url(&conn, &url)?;
+    }
+    crate::sync::register(&path, &email, &password).await
+}
+
+#[tauri::command]
+pub async fn sync_login(
+    state: State<'_, AppData>,
+    email: String,
+    password: String,
+    base_url: Option<String>,
+) -> Result<crate::sync::SyncStatusView, String> {
+    let path = state.db_path.clone();
+    if let Some(url) = base_url {
+        let conn = db::open(&path)?;
+        crate::sync::set_base_url(&conn, &url)?;
+    }
+    crate::sync::login(&path, &email, &password).await
+}
+
+#[tauri::command]
+pub fn sync_logout(state: State<'_, AppData>) -> Result<crate::sync::SyncStatusView, String> {
+    let conn = connection(&state)?;
+    crate::sync::logout(&conn)
+}
+
+#[tauri::command]
+pub async fn sync_now(app: AppHandle, state: State<'_, AppData>) -> Result<crate::sync::SyncResultView, String> {
+    let path = state.db_path.clone();
+    let result = crate::sync::sync_now(&path).await?;
+    let _ = app.emit("desk://changed", ());
+    Ok(result)
 }
 
