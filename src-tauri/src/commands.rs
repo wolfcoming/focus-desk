@@ -351,12 +351,6 @@ pub fn today_board(state: State<'_, AppData>) -> Result<db::TodayBoard, String> 
 }
 
 #[tauri::command]
-pub fn weekly_packet(state: State<'_, AppData>) -> Result<db::WeeklyPacket, String> {
-    let conn = connection(&state)?;
-    db::weekly_packet(&conn)
-}
-
-#[tauri::command]
 pub fn bump_follow_up(state: State<'_, AppData>, id: i64, days: i64) -> Result<Item, String> {
     let conn = connection(&state)?;
     db::bump_follow_up(&conn, id, days)
@@ -571,15 +565,6 @@ pub async fn ai_follow_up_lines(
         (item, config)
     };
     ai::follow_up_lines(config, &item, extra.as_deref().unwrap_or("")).await
-}
-
-#[tauri::command]
-pub async fn ai_weekly(state: State<'_, AppData>) -> Result<ai::WeeklyResult, String> {
-    let conn = connection(&state)?;
-    let packet = db::weekly_packet(&conn)?;
-    let config = ai::load_config(&conn)?;
-    drop(conn);
-    Ok(ai::weekly(config, &packet).await)
 }
 
 #[tauri::command]

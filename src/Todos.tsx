@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import type { Item, ItemDraft, Project, Subproject } from "./types";
 import { parseQuadrant, quadrantValue, QUADRANT_OPTIONS } from "./types";
@@ -53,9 +54,17 @@ function detailFromItem(item: Item): TodoDetailForm {
 export function Todos({
   revision,
   onOpen,
+  openTodoId = null,
+  onRequestOpenTodo,
+  onRequestCloseTodo,
+  chromeBack = true,
 }: {
   revision: number;
   onOpen: (projectId: number) => void;
+  openTodoId?: number | null;
+  onRequestOpenTodo?: (id: number) => void;
+  onRequestCloseTodo?: () => void;
+  chromeBack?: boolean;
 }) {
   const [todos, setTodos] = useState<Item[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -67,14 +76,17 @@ export function Todos({
   const [remindAt, setRemindAt] = useState<string | null>(null);
   const [showAffil, setShowAffil] = useState(false);
   const [error, setError] = useState("");
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [internalOpenId, setInternalOpenId] = useState<number | null>(null);
   const [detail, setDetail] = useState<TodoDetailForm | null>(null);
+  const controlled = onRequestOpenTodo != null;
+  const openId = controlled ? openTodoId : internalOpenId;
   const [busy, setBusy] = useState(false);
   const [linkTarget, setLinkTarget] = useState<Item | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [note, setNote] = useState("");
   const [thinking, setThinking] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const mobile = isAndroid();
 
   async function load() {
     try {
@@ -109,15 +121,18 @@ export function Todos({
   const opened = openId != null ? todos.find((item) => item.id === openId) ?? null : null;
 
   useEffect(() => {
-    if (openId == null) return;
-    const current = todos.find((item) => item.id === openId);
-    if (!current) {
-      setOpenId(null);
+    if (openId == null) {
       setDetail(null);
       return;
     }
-    setDetail((prev) => (prev ? prev : detailFromItem(current)));
-  }, [todos, openId]);
+    const current = todos.find((item) => item.id === openId);
+    if (!current) {
+      if (!controlled) setInternalOpenId(null);
+      setDetail(null);
+      return;
+    }
+    setDetail(detailFromItem(current));
+  }, [todos, openId, controlled]);
 
   const projectSubs = useMemo(() => {
     const id = Number(projectId);
@@ -158,14 +173,22 @@ export function Todos({
 
   function openTodo(item: Item) {
     setError("");
-    setOpenId(item.id);
+    if (onRequestOpenTodo) {
+      onRequestOpenTodo(item.id);
+      return;
+    }
+    setInternalOpenId(item.id);
     setDetail(detailFromItem(item));
   }
 
   function closeTodo() {
-    setOpenId(null);
     setDetail(null);
     setError("");
+    if (onRequestCloseTodo) {
+      onRequestCloseTodo();
+      return;
+    }
+    setInternalOpenId(null);
   }
 
   async function saveDetail() {
@@ -310,7 +333,9 @@ export function Todos({
     return (
       <section>
         <div className="project-page">
-          <button type="button" className="back" onClick={closeTodo}>返回待办</button>
+          {chromeBack && (
+            <button type="button" className="back" onClick={closeTodo}>返回待办</button>
+          )}
           <header className="project-header">
             <div className="project-header-top">
               <div className="project-heading">
@@ -526,7 +551,9 @@ export function Todos({
   return (
     <section>
       <h1>待办</h1>
-      <p className="lead todos-lead">轻量勾选清单：勾选即完成；未挂靠的可关联到项目，或整理成任务 / 阻塞项。</p>
+      <p className="lead todos-lead">
+        {mobile ? "勾选即完成。没挂项目的可以再关联。" : "轻量勾选清单：勾选即完成；未挂靠的可关联到项目，或整理成任务 / 阻塞项。"}
+      </p>
       <ErrorText text={error} />
       <form
         className="todo-compose"
@@ -586,7 +613,7 @@ export function Todos({
               挂靠：{affilSummary}
             </button>
           </div>
-          {showAffil && (
+          {showAffil && !mobile && (
             <div className="todo-affil-fields">
               <select
                 value={projectId}
@@ -616,6 +643,55 @@ export function Todos({
           )}
         </div>
       </form>
+      {mobile && showAffil && (
+        <div className="android-sheet-backdrop" role="presentation" onClick={() => setShowAffil(false)}>
+          <div
+            className="android-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="挂靠项目"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="android-sheet-handle" aria-hidden />
+            <div className="android-sheet-head">
+              <h3>挂靠</h3>
+              <button type="button" className="quiet" onClick={() => setShowAffil(false)}>完成</button>
+            </div>
+            <div className="stack">
+              <label className="field">
+                项目
+                <select
+                  value={projectId}
+                  onChange={(event) => {
+                    setProjectId(event.target.value);
+                    setSubId("");
+                  }}
+                  aria-label="挂靠项目"
+                >
+                  <option value="">不挂项目</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                子任务
+                <select
+                  value={subId}
+                  onChange={(event) => setSubId(event.target.value)}
+                  disabled={!projectId}
+                  aria-label="挂靠子任务"
+                >
+                  <option value="">{projectId ? "整个项目" : "先选项目"}</option>
+                  {projectSubs.map((sub) => (
+                    <option key={sub.id} value={sub.id}>{sub.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
       {todos.length === 0 && <Empty text="还没有待办。写一条，勾选就完事。" />}
       <div className="list">
         {todos.map((item) => {

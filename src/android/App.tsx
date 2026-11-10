@@ -1,20 +1,26 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { onBackButtonPress } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api, message } from "../api";
-import { Progress } from "../Progress";
 import { ProjectOverlays, Projects } from "../Projects";
 import { Settings } from "../Settings";
 import { Today } from "../Today";
 import { Todos } from "../Todos";
 import type { Project } from "../types";
-import { Weekly } from "../Weekly";
 import { ErrorText } from "../widgets";
 import { More } from "./More";
+import {
+  isNested,
+  readNavState,
+  rootTab,
+  topFrame,
+  type Frame,
+  type NavState,
+  type Tab,
+} from "./nav";
 import { ProjectsHome } from "./ProjectsHome";
 import "./android.css";
-
-type Tab = "today" | "todos" | "projects" | "more";
-type Page = Tab | "progress" | "weekly" | "settings";
 
 const TAB_LABEL: Record<Tab, string> = {
   today: "今天",
@@ -51,34 +57,129 @@ const TAB_ICON: Record<Tab, ReactNode> = {
   ),
 };
 
-const PAGE_TITLE: Record<Page, string> = {
-  today: "今天",
-  todos: "待办",
-  projects: "项目",
-  more: "更多",
-  progress: "进度总览",
-  weekly: "周回顾",
-  settings: "设置",
-};
+function sameFrame(a: Frame, b: Frame) {
+  if (a.type !== b.type) return false;
+  if (a.type === "tab" && b.type === "tab") return a.tab === b.tab;
+  if (a.type === "project" && b.type === "project") return a.id === b.id;
+  if (a.type === "sub" && b.type === "sub") return a.projectId === b.projectId && a.subId === b.subId;
+  if (a.type === "todo" && b.type === "todo") return a.id === b.id;
+  return a.type === "settings" && b.type === "settings";
+}
 
 export function AndroidApp() {
-  const [page, setPage] = useState<Page>("today");
+  const [stack, setStack] = useState<Frame[]>([{ type: "tab", tab: "today" }]);
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState("");
   const [projectRows, setProjectRows] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState<number | null>(null);
   const [projectTick, setProjectTick] = useState(0);
-  const [focusSubId, setFocusSubId] = useState<number | null>(null);
   const [createProject, setCreateProject] = useState(false);
   const [deleteProject, setDeleteProject] = useState<Project | null>(null);
+  const bootstrapped = useRef(false);
+  const stackRef = useRef(stack);
+  stackRef.current = stack;
 
-  const activeTab: Tab =
-    page === "progress" || page === "weekly" || page === "settings" || page === "more"
-      ? "more"
-      : page;
-  const inProjectDetail = page === "projects" && projectId != null;
-  const inMoreSub = page === "progress" || page === "weekly" || page === "settings";
-  const showBack = inProjectDetail || inMoreSub;
+  const top = topFrame(stack);
+  const activeTab = rootTab(stack);
+  const nested = isNested(stack);
+  const showTabs = !nested;
+
+  const projectId =
+    top.type === "project" ? top.id
+      : top.type === "sub" ? top.projectId
+        : null;
+  const openSubId = top.type === "sub" ? top.subId : null;
+  const openTodoId = top.type === "todo" ? top.id : null;
+
+  function writeHistory(next: Frame[], mode: "push" | "replace") {
+    const state: NavState = { stack: next };
+    if (mode === "push") history.pushState(state, "");
+    else history.replaceState(state, "");
+  }
+
+  function replaceStack(next: Frame[]) {
+    setStack(next);
+    writeHistory(next, "replace");
+  }
+
+  function pushFrame(frame: Frame) {
+    setStack((current) => {
+      const last = current[current.length - 1];
+      if (last && sameFrame(last, frame)) return current;
+      const next = [...current, frame];
+      writeHistory(next, "push");
+      return next;
+    });
+  }
+
+  function popStack(current: Frame[] = stackRef.current) {
+    if (current.length <= 1) return false;
+    const next = current.slice(0, -1);
+    stackRef.current = next;
+    setStack(next);
+    writeHistory(next, "replace");
+    return true;
+  }
+
+  function goBack() {
+    return popStack();
+  }
+
+  useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
+    writeHistory([{ type: "tab", tab: "today" }], "replace");
+  }, []);
+
+  useEffect(() => {
+    const onPop = (event: PopStateEvent) => {
+      const next = readNavState(event.state).stack;
+      stackRef.current = next;
+      setStack(next);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    const host = window as Window & {
+      __focusdeskBack?: () => boolean;
+      __focusdeskNavDepth?: () => number;
+    };
+    host.__focusdeskNavDepth = () => stackRef.current.length;
+    host.__focusdeskBack = () => popStack(stackRef.current);
+    return () => {
+      delete host.__focusdeskBack;
+      delete host.__focusdeskNavDepth;
+    };
+  }, []);
+
+  // Claim Android system back via Tauri AppPlugin (otherwise it only WebView.goBack()).
+  useEffect(() => {
+    let cancelled = false;
+    let unregister: (() => void) | undefined;
+    void onBackButtonPress(() => {
+      if (popStack(stackRef.current)) return;
+      void invoke("plugin:app|exit").catch(() => {
+        // Fallback: nothing nested and exit unavailable — stay put.
+      });
+    })
+      .then((listener) => {
+        if (cancelled) {
+          void listener.unregister();
+          return;
+        }
+        unregister = () => {
+          void listener.unregister();
+        };
+      })
+      .catch(() => {
+        // Desktop / unsupported — ignore.
+      });
+    return () => {
+      cancelled = true;
+      unregister?.();
+    };
+  }, []);
 
   useEffect(() => {
     void api.listProjects().then(setProjectRows).catch((reason) => setError(message(reason)));
@@ -95,16 +196,19 @@ export function AndroidApp() {
     void listen<{ page: string; projectId: number | null; subprojectId: number | null }>("desk://open", (event) => {
       const target = event.payload;
       if (target.page === "todos") {
-        setPage("todos");
-        setFocusSubId(null);
-        setProjectId(null);
+        replaceStack([{ type: "tab", tab: "todos" }]);
         return;
       }
       if (target.projectId == null) return;
-      setPage("projects");
-      setFocusSubId(target.subprojectId);
-      setProjectId(target.projectId);
+      const next: Frame[] = [
+        { type: "tab", tab: "projects" },
+        { type: "project", id: target.projectId },
+      ];
+      if (target.subprojectId != null) {
+        next.push({ type: "sub", projectId: target.projectId, subId: target.subprojectId });
+      }
       setProjectTick((value) => value + 1);
+      replaceStack(next);
     }).then((fn) => {
       unlistenOpen = fn;
     });
@@ -115,78 +219,110 @@ export function AndroidApp() {
     };
   }, []);
 
-  function openProject(id: number, subprojectId?: number | null) {
-    setFocusSubId(subprojectId ?? null);
-    setPage("projects");
-    setProjectId(id);
-    setProjectTick((value) => value + 1);
-  }
-
   function goTab(tab: Tab) {
-    setPage(tab);
-    setProjectId(null);
-    setFocusSubId(null);
+    replaceStack([{ type: "tab", tab }]);
   }
 
-  function goBack() {
-    if (inProjectDetail) {
-      setProjectId(null);
-      setFocusSubId(null);
-      setPage("projects");
-      return;
-    }
-    if (inMoreSub) {
-      setPage("more");
-    }
+  function openProject(id: number, subprojectId?: number | null) {
+    setProjectTick((value) => value + 1);
+    setStack((current) => {
+      const onProjectsRoot = current.length === 1 && current[0]?.type === "tab" && current[0].tab === "projects";
+      const onThisProject = current.some((frame) => frame.type === "project" && frame.id === id);
+      let next: Frame[];
+      if (subprojectId != null) {
+        next = onThisProject
+          ? [...current.filter((frame) => frame.type !== "sub"), { type: "sub", projectId: id, subId: subprojectId }]
+          : [
+              { type: "tab", tab: "projects" },
+              { type: "project", id },
+              { type: "sub", projectId: id, subId: subprojectId },
+            ];
+      } else if (onProjectsRoot) {
+        next = [...current, { type: "project", id }];
+      } else if (onThisProject) {
+        next = current.filter((frame) => frame.type !== "sub");
+        if (next[next.length - 1]?.type !== "project") {
+          next = [...next, { type: "project", id }];
+        }
+      } else {
+        next = [
+          { type: "tab", tab: "projects" },
+          { type: "project", id },
+        ];
+      }
+      writeHistory(next, "push");
+      return next;
+    });
   }
 
-  const headerTitle = inProjectDetail
-    ? (projectRows.find((project) => project.id === projectId)?.name ?? "项目")
-    : PAGE_TITLE[page];
+  function openSub(projectIdValue: number, subId: number) {
+    setProjectTick((value) => value + 1);
+    pushFrame({ type: "sub", projectId: projectIdValue, subId });
+  }
+
+  function openTodo(id: number) {
+    setStack((current) => {
+      const onTodosRoot = current.length === 1 && current[0]?.type === "tab" && current[0].tab === "todos";
+      const next: Frame[] = onTodosRoot
+        ? [...current, { type: "todo", id }]
+        : [
+            { type: "tab", tab: "todos" },
+            { type: "todo", id },
+          ];
+      writeHistory(next, "push");
+      return next;
+    });
+  }
 
   return (
-    <div className="android-app">
-      <header className="android-topbar">
-        {showBack ? (
-          <button type="button" className="android-back" onClick={goBack} aria-label="返回">
-            ‹
-          </button>
-        ) : (
-          <span className="android-topbar-brand">Little Fun</span>
-        )}
-        <h1 className="android-topbar-title">{headerTitle}</h1>
-        <span className="android-topbar-spacer" aria-hidden />
-      </header>
+    <div className={`android-app${nested ? " android-nested" : ""}`}>
+      {nested && (
+        <button type="button" className="android-float-back" onClick={goBack} aria-label="返回">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 5.5 8.5 12 15 18.5" />
+          </svg>
+        </button>
+      )}
 
       <main className="android-main">
         <ErrorText text={error} />
-        {page === "today" && (
-          <Today revision={revision} onOpen={openProject} onOpenTodos={() => setPage("todos")} />
+        {top.type === "tab" && top.tab === "today" && (
+          <Today revision={revision} onOpen={openProject} onOpenTodos={() => goTab("todos")} />
         )}
-        {page === "todos" && <Todos revision={revision} onOpen={openProject} />}
-        {page === "projects" && !inProjectDetail && (
+        {(top.type === "tab" && top.tab === "todos") || top.type === "todo" ? (
+          <Todos
+            revision={revision}
+            onOpen={openProject}
+            openTodoId={openTodoId}
+            onRequestOpenTodo={openTodo}
+            onRequestCloseTodo={goBack}
+            chromeBack={false}
+          />
+        ) : null}
+        {top.type === "tab" && top.tab === "projects" && (
           <ProjectsHome
             projects={projectRows}
             onOpen={(id) => openProject(id)}
             onCreate={() => setCreateProject(true)}
           />
         )}
-        {page === "projects" && inProjectDetail && (
+        {(top.type === "project" || top.type === "sub") && projectId != null && (
           <Projects
             revision={revision}
             selectedId={projectId}
             projectTick={projectTick}
-            focusSubId={focusSubId}
-            onFocusedSub={() => setFocusSubId(null)}
+            focusSubId={openSubId}
+            onFocusedSub={() => {}}
             onAskDelete={setDeleteProject}
+            onRequestOpenSub={(subId) => openSub(projectId, subId)}
+            onRequestCloseSub={goBack}
+            chromeBack={false}
           />
         )}
-        {page === "more" && (
-          <More onOpen={(next) => setPage(next)} />
+        {top.type === "tab" && top.tab === "more" && (
+          <More onOpen={() => pushFrame({ type: "settings" })} />
         )}
-        {page === "progress" && <Progress revision={revision} onOpen={openProject} />}
-        {page === "weekly" && <Weekly revision={revision} onOpen={openProject} />}
-        {page === "settings" && <Settings revision={revision} />}
+        {top.type === "settings" && <Settings revision={revision} />}
 
         <ProjectOverlays
           createOpen={createProject}
@@ -194,31 +330,36 @@ export function AndroidApp() {
           onCloseCreate={() => setCreateProject(false)}
           onCloseDelete={() => setDeleteProject(null)}
           onCreated={(project) => {
-            setProjectId(project.id);
-            setPage("projects");
             setCreateProject(false);
+            setProjectTick((value) => value + 1);
+            replaceStack([
+              { type: "tab", tab: "projects" },
+              { type: "project", id: project.id },
+            ]);
           }}
           onDeleted={(id) => {
-            setProjectId((current) => (current === id ? null : current));
             setDeleteProject(null);
-            setPage("projects");
+            if (projectId === id) replaceStack([{ type: "tab", tab: "projects" }]);
           }}
         />
       </main>
 
-      <nav className="android-tabbar" aria-label="主导航">
-        {(Object.keys(TAB_LABEL) as Tab[]).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className={activeTab === tab ? "android-tab active" : "android-tab"}
-            onClick={() => goTab(tab)}
-          >
-            <span className="android-tab-icon">{TAB_ICON[tab]}</span>
-            <span className="android-tab-label">{TAB_LABEL[tab]}</span>
-          </button>
-        ))}
-      </nav>
+      {showTabs && (
+        <nav className="android-tabbar" aria-label="主导航">
+          {(Object.keys(TAB_LABEL) as Tab[]).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={activeTab === tab ? "android-tab active" : "android-tab"}
+              onClick={() => goTab(tab)}
+              aria-current={activeTab === tab ? "page" : undefined}
+            >
+              <span className="android-tab-icon">{TAB_ICON[tab]}</span>
+              <span className="android-tab-label">{TAB_LABEL[tab]}</span>
+            </button>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }

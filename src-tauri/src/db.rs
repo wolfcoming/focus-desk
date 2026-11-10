@@ -124,25 +124,6 @@ pub struct TodayBoard {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OverrideNote {
-    pub created_at: String,
-    pub raw_text: String,
-    pub reason: String,
-    pub verdict: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WeeklyPacket {
-    pub inbox: Vec<Item>,
-    pub stale: Vec<Subproject>,
-    pub follow_ups: Vec<Item>,
-    pub undated_important: Vec<Item>,
-    pub overrides: Vec<OverrideNote>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReminderView {
     pub class: InterruptClass,
     pub title: String,
@@ -1864,74 +1845,6 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
     })
 }
 
-pub fn weekly_packet(conn: &Connection) -> Result<WeeklyPacket, String> {
-    let moment = now();
-    let inbox = list_items(conn, Some("todo"))?
-        .into_iter()
-        .filter(|item| item.status == "open" && item.project_id.is_none() && item.subproject_id.is_none())
-        .collect();
-    let stale_cutoff = timeutil::iso(moment - Duration::days(3));
-    let mut stmt = conn
-        .prepare(
-            &format!(
-                "{SUB_FROM} WHERE s.status = 'active' AND COALESCE(s.kind, 'regular') != 'periodic' AND s.last_touched_at <= ?1
-                 ORDER BY s.last_touched_at"
-            ),
-        )
-        .map_err(|err| err.to_string())?;
-    let stale = stmt
-        .query_map(params![stale_cutoff], map_subproject)
-        .map_err(|err| err.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| err.to_string())?;
-    let follow_ups = list_items(conn, Some("waiting"))?
-        .into_iter()
-        .filter(|item| {
-            item.status == "open"
-                && item
-                    .follow_up_at
-                    .as_deref()
-                    .and_then(parse_stored)
-                    .map(|due| due <= moment)
-                    .unwrap_or(false)
-        })
-        .collect();
-    let undated_important = list_items(conn, Some("task"))?
-        .into_iter()
-        .filter(|item| {
-            item.important == Some(true)
-                && item.due_at.is_none()
-                && matches!(item.status.as_str(), "open" | "doing")
-        })
-        .collect();
-    let week = timeutil::iso(timeutil::start_of_week(moment));
-    let mut log_stmt = conn
-        .prepare(
-            "SELECT created_at, raw_text, reason, verdict FROM activity_logs
-             WHERE accepted = 0 AND created_at >= ?1 ORDER BY id DESC LIMIT 8",
-        )
-        .map_err(|err| err.to_string())?;
-    let overrides = log_stmt
-        .query_map(params![week], |row| {
-            Ok(OverrideNote {
-                created_at: row.get(0)?,
-                raw_text: row.get(1)?,
-                reason: row.get(2)?,
-                verdict: row.get(3)?,
-            })
-        })
-        .map_err(|err| err.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| err.to_string())?;
-    Ok(WeeklyPacket {
-        inbox,
-        stale,
-        follow_ups,
-        undated_important,
-        overrides,
-    })
-}
-
 pub fn bump_follow_up(conn: &Connection, id: i64, days: i64) -> Result<Item, String> {
     let next = timeutil::iso(now() + Duration::days(days.max(1)));
     let stamp = timeutil::now_iso();
@@ -2341,7 +2254,7 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
         None, None, None, None, 0, None, None, None, None, None, &stamp,
     )?;
     let copy_task = insert_item(
-        &tx, "task", "写首页主标题", "没有硬截止。周回顾里应出现在「重要但没日期」。",
+        &tx, "task", "写首页主标题", "没有硬截止的重要任务。",
         Some(launch), Some(homepage), Some(1), None, Some(90), "open",
         None, None, None, None, 0, None, None, None, None, None, &stamp,
     )?;

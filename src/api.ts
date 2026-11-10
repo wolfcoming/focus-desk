@@ -13,7 +13,6 @@ import type {
   TodayBoard,
   IdeaTag,
   WorkLog,
-  WeeklyPacket,
 } from "./types";
 
 export function message(error: unknown) {
@@ -96,7 +95,6 @@ export const api = {
   startItem: (id: number) => invoke<Item>("start_item", { id }),
   setToday: (ids: number[]) => invoke<void>("set_today", { ids }),
   today: () => invoke<TodayBoard>("today_board"),
-  weekly: () => invoke<WeeklyPacket>("weekly_packet"),
   bumpFollowUp: (id: number, days: number) => invoke<Item>("bump_follow_up", { id, days }),
   settings: () => invoke<SettingsView>("get_settings"),
   saveSettings: (input: {
@@ -118,7 +116,6 @@ export const api = {
     invoke<string>("test_ai_connection", { baseUrl, model, apiKey }),
   clarify: (id: number) => invoke<ClarifyResult>("ai_clarify", { id }),
   morning: () => invoke<MorningResult>("ai_morning"),
-  weeklyAssist: () => invoke<{ source: string; summary: string; thinking?: string | null }>("ai_weekly"),
   followUpLines: (id: number, extra: string | null) =>
     invoke<{ scripts: string[]; thinking: string | null }>("ai_follow_up_lines", { id, extra }),
   loadDemo: () => invoke<void>("load_demo"),

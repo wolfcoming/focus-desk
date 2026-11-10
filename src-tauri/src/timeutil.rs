@@ -83,12 +83,3 @@ pub fn add_minutes(base: DateTime<Local>, minutes: i64) -> DateTime<Local> {
 pub fn format_short(dt: DateTime<Local>) -> String {
     dt.format("%m-%d %H:%M").to_string()
 }
-
-pub fn start_of_week(now: DateTime<Local>) -> DateTime<Local> {
-    let day = now.date_naive();
-    let monday = day - Duration::days(now.weekday().num_days_from_monday() as i64);
-    monday
-        .and_hms_opt(0, 0, 0)
-        .and_then(|naive| naive.and_local_timezone(Local).single())
-        .unwrap_or(now)
-}

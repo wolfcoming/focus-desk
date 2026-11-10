@@ -15,14 +15,17 @@ export function ProjectsHome({
   return (
     <section className="android-projects-home">
       <header className="android-page-head">
-        <h1>项目</h1>
+        <div className="android-page-head-copy">
+          <h1>项目</h1>
+          <p className="lead">大项目与子任务</p>
+        </div>
         <button type="button" className="primary" onClick={onCreate}>
           新建
         </button>
       </header>
 
       {visible.length === 0 ? (
-        <Empty text="还没有项目。点右上角新建一条。" />
+        <Empty text="还没有项目。点右上「新建」开一条。" />
       ) : (
         <div className="android-list">
           {visible.map((project) => (

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import type { Subproject, WorkLog } from "./types";
 import { AiBusy, Empty, ErrorText, when } from "./widgets";
@@ -37,6 +38,7 @@ export function Settings({ revision }: { revision: number }) {
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncNote, setSyncNote] = useState("");
   const [syncError, setSyncError] = useState("");
+  const [showAdvancedAi, setShowAdvancedAi] = useState(false);
 
   useEffect(() => {
     void api.settings().then((settings) => {
@@ -160,6 +162,8 @@ export function Settings({ revision }: { revision: number }) {
     }
   }
 
+  const mobile = isAndroid();
+
   const subName = (id: number) => {
     const sub = subs.find((item) => item.id === id);
     if (!sub) return "未知子任务";
@@ -169,10 +173,21 @@ export function Settings({ revision }: { revision: number }) {
   return (
     <section>
       <h1>设置</h1>
-      <p className="lead">模型用于待办关联项目、今日三件建议、周回顾摘要和阻塞问询话术。钥匙放在系统凭据里。</p>
+      <p className="lead">
+        {mobile
+          ? "模型用于关联待办、今日建议和阻塞问询。钥匙存在系统凭据里。"
+          : "模型用于待办关联项目、今日三件建议和阻塞问询话术。钥匙放在系统凭据里。"}
+      </p>
       <ErrorText text={error} />
       <div className="stack">
-        <label className="field">接口地址<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+        {(!mobile || showAdvancedAi) && (
+          <label className="field">接口地址<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+        )}
+        {mobile && !showAdvancedAi && (
+          <button type="button" className="quiet settings-advanced-toggle" onClick={() => setShowAdvancedAi(true)}>
+            显示高级接口设置
+          </button>
+        )}
         <label className="field">模型<input value={model} onChange={(event) => setModel(event.target.value)} /></label>
         <label className="field">
           API 钥匙
@@ -185,7 +200,7 @@ export function Settings({ revision }: { revision: number }) {
             登录时启动
           </label>
         )}
-        <div className="actions" style={{ justifyContent: "flex-start" }}>
+        <div className={`actions settings-actions${mobile ? " settings-actions-mobile" : ""}`} style={{ justifyContent: "flex-start" }}>
           <button className="primary" onClick={() => void api.saveSettings({
             baseUrl,
             model,
@@ -225,18 +240,22 @@ export function Settings({ revision }: { revision: number }) {
         </div>
         {testing && <AiBusy label="正在检测模型连接" />}
         {note && <p className="note" style={{ whiteSpace: "pre-wrap" }}>{note}</p>}
-        <p className="note">数据文件：{dataPath}</p>
+        {!mobile && <p className="note">数据文件：{dataPath}</p>}
         <p className="note">点「重新加载示例数据」会清空当前业务数据，再写入一套模拟数据。模型地址与钥匙会保留。</p>
-        <p className="note">关掉主窗口后程序仍在托盘里。右下角图标可以重新打开，或退出。</p>
+        {!mobile && (
+          <p className="note">关掉主窗口后程序仍在托盘里。右下角图标可以重新打开，或退出。</p>
+        )}
       </div>
 
       <section className="project-section" style={{ marginTop: 28 }}>
         <div className="section-head">
           <h2>云端同步</h2>
         </div>
-        <p className="note">把项目、子任务、待办、进展与灵感便签同步到服务器。先登录，再点立即同步。</p>
+        <p className="note">把项目、子任务、待办、进展与灵感便签同步到云端。先登录，再点立即同步。</p>
         <div className="stack">
-          <label className="field">同步服务地址<input value={syncBaseUrl} onChange={(event) => setSyncBaseUrl(event.target.value)} /></label>
+          {!mobile && (
+            <label className="field">同步服务地址<input value={syncBaseUrl} onChange={(event) => setSyncBaseUrl(event.target.value)} /></label>
+          )}
           <label className="field">邮箱<input value={syncEmail} onChange={(event) => setSyncEmail(event.target.value)} autoComplete="username" /></label>
           <label className="field">
             密码

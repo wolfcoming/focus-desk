@@ -135,14 +135,6 @@ export type TodayBoard = {
   suggestions: Suggested[];
 };
 
-export type WeeklyPacket = {
-  inbox: Item[];
-  stale: Subproject[];
-  followUps: Item[];
-  undatedImportant: Item[];
-  overrides: { createdAt: string; rawText: string; reason: string; verdict: string }[];
-};
-
 export type Reminder = {
   class: string;
   title: string;

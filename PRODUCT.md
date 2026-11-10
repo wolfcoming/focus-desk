@@ -24,7 +24,7 @@ Runs as a Tauri desktop app (Windows and macOS) with a local SQLite store; closi
 
 ## Capabilities and Constraints
 
-Confirmed surfaces: 待办, 大项目 / 子任务 (常规 / 周期性), 今日三件, 今天的日常, 阻塞项 (in project detail), 进度总览, 周回顾, 设置. Soft caps: roughly ≤3 active large projects and ≤5 active subtasks (reminders only). Terminology in the current Chinese UI is the product vocabulary but is not locked as an immutable brand asset for redesign. Navigation structure and current layout are not binding constraints for a visual redesign. Stack and native packaging remain Tauri + React/Vite; redesign must preserve working behavior and local-data model.
+Confirmed surfaces: 待办, 大项目 / 子任务 (常规 / 周期性), 今日三件, 今天的日常, 阻塞项 (in project detail), 设置. Soft caps: roughly ≤3 active large projects and ≤5 active subtasks (reminders only). Terminology in the current Chinese UI is the product vocabulary but is not locked as an immutable brand asset for redesign. Navigation structure and current layout are not binding constraints for a visual redesign. Stack and native packaging remain Tauri + React/Vite; redesign must preserve working behavior and local-data model.
 
 ## Brand Commitments
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import type { Item, MorningResult, Subproject, TodayBoard } from "./types";
 import { dailyState } from "./types";
@@ -26,9 +27,11 @@ export function Today({
   const [candidates, setCandidates] = useState<Item[]>([]);
   const [subs, setSubs] = useState<Subproject[]>([]);
   const [replaceIndex, setReplaceIndex] = useState<number | null>(null);
+  const [pickerSlot, setPickerSlot] = useState<number | null>(null);
   const [morning, setMorning] = useState<MorningResult | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState("");
+  const mobile = isAndroid();
 
   async function load() {
     try {
@@ -93,14 +96,45 @@ export function Today({
       if (replaceIndex === index) {
         const next = slots.map((slot, slotIndex) => (slotIndex === index ? id : slot.id));
         await api.setToday(next);
-        setReplaceIndex(null);
-        return;
+      } else {
+        await api.setToday([...slots.map((slot) => slot.id), id]);
       }
-      await api.setToday([...slots.map((slot) => slot.id), id]);
+      setReplaceIndex(null);
+      setPickerSlot(null);
     });
   }
 
+  function openPicker(index: number, replacing = false) {
+    setPickerSlot(index);
+    setReplaceIndex(replacing ? index : null);
+  }
+
+  function closePicker() {
+    setPickerSlot(null);
+    setReplaceIndex(null);
+  }
+
+  function candidateLabel(entry: Item) {
+    return [
+      entry.kind === "todo" ? "待办" : "任务",
+      entry.subprojectName,
+      entry.title,
+    ].filter(Boolean).join(" · ");
+  }
+
   function slotPicker(index: number, placeholder: string, ariaLabel: string) {
+    if (mobile) {
+      return (
+        <button
+          type="button"
+          className="plate-pick-btn"
+          aria-label={ariaLabel}
+          onClick={() => openPicker(index)}
+        >
+          {placeholder}
+        </button>
+      );
+    }
     return (
       <select
         className="plate-pick"
@@ -115,10 +149,7 @@ export function Today({
         <option value="">{placeholder}</option>
         {available.map((entry) => (
           <option key={entry.id} value={entry.id}>
-            {entry.kind === "todo" ? "待办" : "任务"}
-            {" · "}
-            {entry.subprojectName ? `${entry.subprojectName} · ` : ""}
-            {entry.title}
+            {candidateLabel(entry)}
           </option>
         ))}
       </select>
@@ -128,7 +159,7 @@ export function Today({
   return (
     <section className="today-page">
       <h1>今天</h1>
-      <p className="lead">今日三件是你亲手挑的重点；日常来自项目里的周期性子任务。重要和紧急都由你标四象限。</p>
+      <p className="lead">{mobile ? "亲手挑最多三件重点。" : "今日三件是你亲手挑的重点；日常来自项目里的周期性子任务。重要和紧急都由你标四象限。"}</p>
       <ErrorText text={error} />
 
       <h2 className="today-focus-heading">
@@ -139,9 +170,13 @@ export function Today({
         {plates.map((item, index) => {
           if (!item) {
             return (
-              <div key={`empty-${index}`} className="plate empty">
-                <div className="plate-index">槽位 {index + 1}</div>
-                {slotPicker(index, "选择任务…", `为槽位 ${index + 1} 选择任务或待办`)}
+              <div key={`empty-${index}`} className={`plate empty${mobile ? " plate-empty-mobile" : ""}`}>
+                <div className="plate-index">{mobile ? `${index + 1}` : `槽位 ${index + 1}`}</div>
+                {slotPicker(
+                  index,
+                  mobile ? "添加今日重点" : "选择任务…",
+                  `为槽位 ${index + 1} 选择任务或待办`,
+                )}
               </div>
             );
           }
@@ -196,7 +231,7 @@ export function Today({
                 ) : null}
               </div>
               <div className="plate-actions" onClick={(event) => event.stopPropagation()}>
-                {replacing ? (
+                {replacing && !mobile ? (
                   <div className="plate-replace">
                     {slotPicker(index, "换上新的一件…", done ? "挑选一件替换已完成的槽位" : "挑选一件替换当前槽位")}
                     <button type="button" className="quiet" onClick={() => setReplaceIndex(null)}>
@@ -207,7 +242,7 @@ export function Today({
                   <button
                     type="button"
                     className="plate-continue"
-                    onClick={() => setReplaceIndex(index)}
+                    onClick={() => (mobile ? openPicker(index, true) : setReplaceIndex(index))}
                   >
                     继续挑战
                   </button>
@@ -229,7 +264,7 @@ export function Today({
                     <button
                       type="button"
                       className="quiet"
-                      onClick={() => setReplaceIndex(index)}
+                      onClick={() => (mobile ? openPicker(index, true) : setReplaceIndex(index))}
                     >
                       替换
                     </button>
@@ -248,9 +283,48 @@ export function Today({
         })}
       </div>
 
-      <div className="actions" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+      {mobile && pickerSlot != null && (
+        <div className="android-sheet-backdrop" role="presentation" onClick={closePicker}>
+          <div
+            className="android-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="选择今日重点"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="android-sheet-handle" aria-hidden />
+            <div className="android-sheet-head">
+              <h3>选择今日重点</h3>
+              <button type="button" className="quiet" onClick={closePicker}>关闭</button>
+            </div>
+            {available.length === 0 ? (
+              <Empty text="暂无可选。先去待办或项目加一条。" />
+            ) : (
+              <div className="android-sheet-list">
+                {available.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="android-sheet-item"
+                    onClick={() => placeInSlot(pickerSlot, entry.id)}
+                  >
+                    <span className="android-sheet-item-kind">{entry.kind === "todo" ? "待办" : "任务"}</span>
+                    <span className="android-sheet-item-title">{entry.title}</span>
+                    {entry.subprojectName ? (
+                      <span className="android-sheet-item-meta">{entry.subprojectName}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className={`actions today-suggest-actions${mobile ? " today-suggest-actions-mobile" : ""}`} style={{ justifyContent: "flex-start", marginTop: 8 }}>
         <button
           type="button"
+          className={mobile ? "quiet today-suggest-btn" : undefined}
           disabled={aiBusy}
           onClick={() => {
             if (aiBusy) return;
@@ -288,7 +362,9 @@ export function Today({
       ))}
 
       <h2>今天的日常</h2>
-      {board && board.dailies.length === 0 && <Empty text="今天没有周期性日常。去项目里建「周期性子任务」即可出现。" />}
+      {board && board.dailies.length === 0 && (
+        <Empty text={mobile ? "今天没有日常。去项目里建周期性子任务。" : "今天没有周期性日常。去项目里建「周期性子任务」即可出现。"} />
+      )}
       <div className="list">
         {board?.dailies.map(({ item, state }) => (
           <article className="row" key={item.id}>

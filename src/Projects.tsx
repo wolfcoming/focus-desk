@@ -1,4 +1,5 @@
 ﻿import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import { ProjectBlocked } from "./ProjectBlocked";
 import type { IdeaTag, Item, Project, Subproject, WorkLog } from "./types";
@@ -206,6 +207,9 @@ export function Projects({
   focusSubId = null,
   onFocusedSub,
   onAskDelete,
+  onRequestOpenSub,
+  onRequestCloseSub,
+  chromeBack = true,
 }: {
   revision: number;
   selectedId: number | null;
@@ -213,6 +217,9 @@ export function Projects({
   focusSubId?: number | null;
   onFocusedSub?: () => void;
   onAskDelete: (project: Project) => void;
+  onRequestOpenSub?: (subId: number) => void;
+  onRequestCloseSub?: () => void;
+  chromeBack?: boolean;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [subs, setSubs] = useState<Subproject[]>([]);
@@ -222,7 +229,9 @@ export function Projects({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [createSub, setCreateSub] = useState(false);
-  const [openSubId, setOpenSubId] = useState<number | null>(null);
+  const [internalOpenSubId, setInternalOpenSubId] = useState<number | null>(null);
+  const controlledSub = onRequestOpenSub != null;
+  const openSubId = controlledSub ? (focusSubId ?? null) : internalOpenSubId;
   const [progressForm, setProgressForm] = useState({ progress: "doing", progressPercent: "", log: "" });
   const [nameDraft, setNameDraft] = useState("");
   const [descriptionDraft, setDescriptionDraft] = useState("");
@@ -277,17 +286,23 @@ export function Projects({
 
   // 切项目 / 点侧栏回到项目总览时关掉子任务；不要在 focusSubId 被消费清空时误关详情
   useEffect(() => {
+    if (controlledSub) return;
     if (focusSubId != null) return;
-    setOpenSubId(null);
-  }, [selectedId, projectTick]);
+    setInternalOpenSubId(null);
+  }, [selectedId, projectTick, controlledSub, focusSubId]);
 
   useEffect(() => {
     if (focusSubId == null) return;
     const target = subs.find((sub) => sub.id === focusSubId);
     if (!target) return;
+    if (controlledSub) {
+      syncInfoDrafts(target);
+      onFocusedSub?.();
+      return;
+    }
     openSub(target);
     onFocusedSub?.();
-  }, [focusSubId, subs, projectTick]);
+  }, [focusSubId, subs, projectTick, controlledSub]);
 
   useEffect(() => {
     const currentOpen = subs.find((sub) => sub.id === openSubId);
@@ -337,7 +352,6 @@ export function Projects({
 
   function openSub(sub: Subproject) {
     setError("");
-    setOpenSubId(sub.id);
     setLogsOpen(false);
     setPlacingIdea(null);
     setDraggingIdeaId(null);
@@ -357,6 +371,11 @@ export function Projects({
         : sub.progressPercent == null ? "" : String(sub.progressPercent),
       log: "",
     });
+    if (onRequestOpenSub) {
+      onRequestOpenSub(sub.id);
+      return;
+    }
+    setInternalOpenSubId(sub.id);
   }
 
   function beginEditInfo() {
@@ -656,9 +675,11 @@ export function Projects({
               <div className="project-heading">
                 <h1>{current.name}</h1>
               </div>
-              <div className="actions project-header-actions">
-                <button type="button" className="quiet project-delete" onClick={() => onAskDelete(current)}>删除项目</button>
-              </div>
+              {!isAndroid() && (
+                <div className="actions project-header-actions">
+                  <button type="button" className="quiet project-delete" onClick={() => onAskDelete(current)}>删除项目</button>
+                </div>
+              )}
             </div>
             <p className="lead">{current.outcome || "还没有写描述。"}</p>
             <div className="facts">
@@ -711,11 +732,29 @@ export function Projects({
           </section>
 
           <ProjectBlocked projectId={current.id} revision={revision} />
+          {isAndroid() && (
+            <div className="project-danger-zone">
+              <button type="button" className="quiet project-delete" onClick={() => onAskDelete(current)}>
+                删除项目
+              </button>
+            </div>
+          )}
         </div>
       )}
       {current && opened && (
         <div className="project-page">
-          <button type="button" className="back" onClick={() => setOpenSubId(null)}>返回 {current.name}</button>
+          {chromeBack && (
+            <button
+              type="button"
+              className="back"
+              onClick={() => {
+                if (onRequestCloseSub) onRequestCloseSub();
+                else setInternalOpenSubId(null);
+              }}
+            >
+              返回 {current.name}
+            </button>
+          )}
           <header className="project-header">
             <div className="project-header-top">
               <div className="project-heading">
@@ -1419,7 +1458,10 @@ export function Projects({
               void run(async () => {
                 await api.deleteSubproject(target.id);
                 setDeleteSub(null);
-                setOpenSubId((currentId) => currentId === target.id ? null : currentId);
+                if (openSubId === target.id) {
+                  if (onRequestCloseSub) onRequestCloseSub();
+                  else setInternalOpenSubId(null);
+                }
               });
             }}>{busy ? "正在删除…" : "删除"}</button>
           </div>

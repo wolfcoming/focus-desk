@@ -1,17 +1,15 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, message } from "../api";
-import { Progress } from "../Progress";
 import { Settings } from "../Settings";
 import { ProjectOverlays, Projects } from "../Projects";
 import { Today } from "../Today";
 import { Todos } from "../Todos";
 import type { Project } from "../types";
-import { Weekly } from "../Weekly";
 import { ErrorText } from "../widgets";
 import { fetchRailQuote, localQuoteOfDay, type Quote } from "../quotes";
 
-type Page = "today" | "todos" | "projects" | "progress" | "weekly" | "settings";
+type Page = "today" | "todos" | "projects" | "settings";
 
 export function DesktopApp() {
   const [page, setPage] = useState<Page>("today");
@@ -115,8 +113,6 @@ export function DesktopApp() {
 
           <div className="nav-group nav-group-footer">
             <div className="nav-label">其他</div>
-            {navButton("progress", "进度总览")}
-            {navButton("weekly", "周回顾")}
             {navButton("settings", "设置")}
           </div>
         </nav>
@@ -147,8 +143,6 @@ export function DesktopApp() {
           onCreated={(project) => { setProjectId(project.id); setPage("projects"); setCreateProject(false); }}
           onDeleted={(id) => { setProjectId((current) => current === id ? null : current); setDeleteProject(null); }}
         />
-        {page === "progress" && <Progress revision={revision} onOpen={openProject} />}
-        {page === "weekly" && <Weekly revision={revision} onOpen={openProject} />}
         {page === "settings" && <Settings revision={revision} />}
       </main>
     </div>

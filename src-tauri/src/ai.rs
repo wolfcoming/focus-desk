@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::db::{self, Item, ItemDraft, Project, Subproject, Suggested, WeeklyPacket};
+use crate::db::{self, Item, ItemDraft, Project, Subproject, Suggested};
 
 const SERVICE: &str = "focus-desk";
 const ACCOUNT: &str = "ai-api-key";
@@ -39,14 +39,6 @@ pub struct MorningPick {
     pub id: i64,
     pub title: String,
     pub reason: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WeeklyResult {
-    pub source: String,
-    pub summary: String,
-    pub thinking: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -222,62 +214,6 @@ pub async fn morning(config: Option<AiConfig>, suggestions: &[Suggested]) -> Mor
             },
         },
         Err(_) => fallback,
-    }
-}
-
-pub async fn weekly(config: Option<AiConfig>, packet: &WeeklyPacket) -> WeeklyResult {
-    let rules = format!(
-        "未挂靠待办 {} 条，停滞的子任务 {} 个，到点的阻塞 {} 条，没有截止的重要任务 {} 条，本周拒绝切换 {} 次。",
-        packet.inbox.len(),
-        packet.stale.len(),
-        packet.follow_ups.len(),
-        packet.undated_important.len(),
-        packet.overrides.len()
-    );
-    let Some(config) = config else {
-        return WeeklyResult {
-            source: "rules".into(),
-            summary: rules,
-            thinking: None,
-        };
-    };
-    let detail = json!({
-        "inbox": packet.inbox.iter().map(|item| item.title.clone()).collect::<Vec<_>>(),
-        "stale": packet.stale.iter().map(|item| format!("{} / {}", item.project_name, item.name)).collect::<Vec<_>>(),
-        "followUps": packet.follow_ups.iter().map(|item| item.title.clone()).collect::<Vec<_>>(),
-        "undated": packet.undated_important.iter().map(|item| item.title.clone()).collect::<Vec<_>>(),
-        "overrides": packet.overrides.iter().map(|item| item.reason.clone()).collect::<Vec<_>>()
-    });
-    match chat(
-        &config,
-        "你在帮一个人做每周回顾。用中文写一段不超过 120 字的材料，点出该清空、该跟进、该暂停的事。只返回 JSON：{\"summary\":\"...\"}。不要替他做最终决定。",
-        &detail.to_string(),
-    )
-    .await
-    {
-        Ok(reply) => match extract_json(&reply.content).and_then(|value| {
-            value
-                .get("summary")
-                .and_then(|item| item.as_str())
-                .map(|summary| summary.to_string())
-                .ok_or_else(|| "缺少 summary".to_string())
-        }) {
-            Ok(summary) => WeeklyResult {
-                source: "ai".into(),
-                summary,
-                thinking: reply.thinking,
-            },
-            Err(_) => WeeklyResult {
-                source: "rules".into(),
-                summary: rules,
-                thinking: reply.thinking,
-            },
-        },
-        Err(_) => WeeklyResult {
-            source: "rules".into(),
-            summary: rules,
-            thinking: None,
-        },
     }
 }
 

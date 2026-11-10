@@ -1,80 +1,63 @@
-/* Android shell — light-table world, phone rhythm */
+/* Android shell — content-first phone rhythm (not a desktop rail port) */
 
 .android-app {
-  --android-topbar: 48px;
-  --android-tabbar: 58px;
+  --android-tabbar: 64px;
   --android-safe-top: max(env(safe-area-inset-top, 0px), var(--sat, 0px));
   --android-safe-right: max(env(safe-area-inset-right, 0px), var(--sar, 0px));
   --android-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--sab, 0px));
   --android-safe-left: max(env(safe-area-inset-left, 0px), var(--sal, 0px));
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(120% 70% at 50% -18%, rgba(255, 255, 255, 0.9), transparent 55%),
-    linear-gradient(180deg, #eaf2f7 0%, var(--surface) 42%, #eef4f8 100%);
-  padding-top: var(--android-safe-top);
+  /* Keep top wash identical to native statusBarColor (#f4f8fb = --surface). */
+  background: linear-gradient(180deg, var(--surface) 0%, #eef4f8 55%, var(--surface) 100%);
   padding-left: var(--android-safe-left);
   padding-right: var(--android-safe-right);
 }
 
-/* ——— Chrome ——— */
+.android-app.android-nested {
+  grid-template-rows: minmax(0, 1fr);
+}
 
-.android-topbar {
+/* ——— Floating back (nested only) ——— */
+
+.android-float-back {
+  position: fixed;
+  top: calc(var(--android-safe-top) + 10px);
+  left: calc(var(--android-safe-left) + 12px);
+  z-index: 40;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
   display: grid;
-  grid-template-columns: 56px 1fr 56px;
-  align-items: center;
-  min-height: var(--android-topbar);
-  padding: 4px 8px 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--shell-deep) 75%, transparent);
-  background: color-mix(in srgb, var(--shell) 78%, #fff 22%);
-  backdrop-filter: blur(10px);
-}
-
-.android-topbar-brand {
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: color-mix(in srgb, var(--surface-bright) 82%, transparent);
+  box-shadow: 0 6px 18px rgba(42, 54, 64, 0.1);
+  backdrop-filter: blur(12px);
   color: var(--accent-deep);
-  padding-left: 6px;
-  white-space: nowrap;
-  opacity: 0.92;
 }
 
-.android-topbar-title {
-  margin: 0;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.android-float-back svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.android-topbar-spacer { display: block; }
-
-.android-back {
-  justify-self: start;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 8px;
-  font-size: 28px;
-  line-height: 1;
-  color: var(--accent-deep);
-  background: transparent;
-  border-color: transparent;
-  border-radius: 10px;
-}
-
-.android-back:hover,
-.android-back:active {
-  border-color: transparent;
-  background: rgba(255, 255, 255, 0.55);
+.android-float-back:hover,
+.android-float-back:active {
+  border-color: rgba(255, 255, 255, 0.9);
+  background: var(--surface-bright);
 }
 
 .android-main {
@@ -83,17 +66,30 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 14px 14px 24px;
+  padding:
+    calc(var(--android-safe-top) + 14px)
+    16px
+    calc(18px + var(--android-safe-bottom))
+    16px;
 }
+
+.android-app.android-nested .android-main {
+  padding-top: calc(var(--android-safe-top) + 56px);
+  padding-bottom: calc(22px + var(--android-safe-bottom));
+}
+
+/* ——— Bottom nav: Material-like indicator, not card chrome ——— */
 
 .android-tabbar {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 2px;
-  min-height: var(--android-tabbar);
-  border-top: 1px solid color-mix(in srgb, var(--shell-deep) 80%, transparent);
-  background: color-mix(in srgb, var(--shell) 86%, #fff 14%);
-  padding: 8px 6px 10px;
+  gap: 0;
+  min-height: calc(var(--android-tabbar) + var(--android-safe-bottom));
+  padding: 6px 10px calc(8px + var(--android-safe-bottom));
+  border-top: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow: 0 -8px 24px rgba(42, 54, 64, 0.04);
 }
 
 .android-tab {
@@ -101,96 +97,135 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   min-height: 48px;
-  padding: 6px 2px 5px;
+  padding: 4px 2px;
   background: transparent;
-  border-color: transparent;
-  border-radius: 12px;
+  border: none;
+  border-radius: 0;
   color: var(--ink-faint);
   font-size: 11px;
   font-weight: 550;
   letter-spacing: 0.01em;
-  transition: color 140ms var(--ease), background 140ms var(--ease), box-shadow 160ms var(--ease);
+  box-shadow: none;
+  transition: color 140ms var(--ease);
 }
 
 .android-tab-icon {
-  width: 22px;
-  height: 22px;
+  width: 56px;
+  height: 30px;
   display: grid;
   place-items: center;
-  opacity: 0.88;
+  border-radius: 16px;
+  transition: background 160ms var(--ease), color 140ms var(--ease);
 }
 
 .android-tab-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   stroke: currentColor;
   fill: none;
-  stroke-width: 1.8;
+  stroke-width: 1.75;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .android-tab.active {
   color: var(--accent-deep);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 4px 12px rgba(42, 54, 64, 0.06);
+  background: transparent;
+  box-shadow: none;
 }
 
-.android-tab.active .android-tab-icon { opacity: 1; }
+.android-tab.active .android-tab-icon {
+  background: color-mix(in srgb, var(--accent-soft) 88%, #fff 12%);
+}
 
-.android-tab:hover { border-color: transparent; }
+.android-tab:hover,
+.android-tab:active {
+  border-color: transparent;
+  background: transparent;
+}
 
 .android-tab-label {
   line-height: 1.1;
+  font-size: 11px;
 }
 
-/* ——— Page heads / lists ——— */
-
-.android-main > section.today-page > h1,
-.android-main > section > h1:first-child,
-.android-projects-home > .android-page-head h1,
-.android-more > .android-page-head h1 {
-  display: none;
-}
-
-.android-main .project-page > .project-header .project-heading h1 {
-  display: none;
-}
-.android-main .project-page > .back + .project-header .project-heading h1 {
-  display: revert;
-}
-
-/* Desktop leads are long; phone already has a topbar title */
-.android-main .today-page > .lead,
-.android-main .todos-lead,
-.android-projects-home > .android-page-head .lead,
-.android-more > .android-page-head .lead {
-  display: none;
-}
+/* ——— Page heads as content, not chrome ——— */
 
 .android-page-head {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
-  min-height: 0;
+  margin: 2px 0 16px;
 }
 
-.android-page-head:not(:has(button)) {
-  margin-bottom: 4px;
-  min-height: 0;
+.android-page-head-copy {
+  min-width: 0;
+}
+
+.android-page-head h1,
+.android-main > section.today-page > h1,
+.android-main > section > h1:first-child {
+  display: block;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--ink);
+}
+
+.android-page-head {
+  margin: 0 0 12px;
+}
+
+.android-page-head .lead,
+.android-main .today-page > .lead,
+.android-main .todos-lead {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-faint);
 }
 
 .android-page-head .primary {
   flex: 0 0 auto;
-  min-height: 40px;
-  padding: 8px 16px;
-  border-radius: 10px;
+  min-height: 36px;
+  margin-top: 4px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent-soft) 72%, #fff);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line-soft));
+  box-shadow: none;
+}
+
+.android-page-head .primary:hover,
+.android-page-head .primary:active {
+  background: color-mix(in srgb, var(--accent-soft) 92%, #fff);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line-soft));
+  color: var(--accent-deep);
+}
+
+.android-main .project-page > .project-header .project-heading h1 {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+}
+
+.android-main .project-page > .back {
+  min-height: 36px;
+  margin: 0 0 10px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 999px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--surface-bright) 70%, transparent);
+  color: var(--accent-deep);
+  font-weight: 600;
 }
 
 .android-list {
@@ -211,7 +246,7 @@
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(236, 244, 248, 0.8));
   border: 1px solid rgba(255, 255, 255, 0.82);
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: var(--shadow-plate);
   transition: transform 140ms var(--ease), box-shadow 160ms var(--ease);
 }
@@ -265,22 +300,25 @@
   font-weight: 400;
 }
 
-/* ——— Today: compact light-table ——— */
+/* ——— Today focus ——— */
 
 .android-app .today-focus-heading {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 650;
+  margin: 18px 0 12px;
+  font-size: 15px;
+  font-weight: 700;
   letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .android-app .today-done-hint {
   font-size: 12px;
   font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--ink-faint);
 }
 
@@ -293,28 +331,30 @@
 .android-app .plate {
   min-height: 0;
   gap: 8px;
-  padding: 13px 14px 12px;
-  border-radius: 14px;
+  padding: 14px 15px 13px;
+  border-radius: 16px;
 }
 
 .android-app .plate:hover {
-  transform: none; /* no hover-lift on touch */
+  transform: none;
 }
 
 .android-app .plate::after {
-  display: none; /* under-glow eats vertical rhythm on a stacked phone deck */
+  display: none;
 }
 
-.android-app .plate.empty {
-  display: grid;
-  grid-template-columns: auto 1fr;
+.android-app .plate.empty,
+.android-app .plate.plate-empty-mobile {
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 10px 12px;
-  min-height: 52px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface-recessed) 70%, #fff 30%);
-  border: 1px dashed color-mix(in srgb, var(--line) 80%, var(--accent) 20%);
-  box-shadow: none;
+  gap: 12px;
+  min-height: 58px;
+  max-height: none;
+  padding: 8px 10px 8px 12px;
+  background: var(--surface-bright);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 6px 16px rgba(42, 54, 64, 0.05);
 }
 
 .android-app .plate.empty::before {
@@ -322,20 +362,58 @@
 }
 
 .android-app .plate.empty .plate-index {
+  width: 30px;
+  height: 30px;
   margin: 0;
-  white-space: nowrap;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  flex: 0 0 auto;
 }
 
-.android-app .plate.empty .plate-pick {
-  margin-top: 0;
-  grid-column: 2;
-  min-height: 40px;
+.android-app .plate-pick-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 8px 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
   font-size: 15px;
-  background: rgba(255, 255, 255, 0.92);
+  font-weight: 650;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.android-app .plate-pick-btn::after {
+  content: "+";
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 80%, #fff);
+  color: var(--accent-deep);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line-soft));
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.android-app .plate-pick-btn:hover,
+.android-app .plate-pick-btn:active {
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+  border: none;
 }
 
 .android-app .plate-title {
@@ -352,36 +430,66 @@
   margin-top: 2px;
 }
 
-.android-app .plate-actions button {
-  min-height: 36px;
-  padding: 6px 10px;
+.android-app .plate-actions button,
+.android-app .plate-actions button.primary {
+  min-height: 34px;
+  padding: 6px 12px;
   font-size: 13px;
-}
-
-.android-app .today-page > .actions {
-  margin: 2px 0 20px !important;
-  gap: 8px;
-  display: grid;
-  grid-template-columns: 1fr;
-}
-
-.android-app .today-page > .actions button {
-  width: 100%;
-  min-height: 44px;
-  padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: 999px;
   font-weight: 600;
+  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent-soft) 70%, #fff);
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line-soft));
+  box-shadow: none;
+}
+
+.android-app .plate-actions button.quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-soft);
+  font-weight: 550;
+}
+
+.android-app .today-page > .actions,
+.android-app .today-suggest-actions-mobile {
+  margin: 4px 0 16px !important;
+  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start !important;
+}
+
+.android-app .today-suggest-btn {
+  min-height: 36px !important;
+  padding: 7px 14px !important;
+  border-radius: 999px !important;
+  width: auto !important;
+  font-weight: 600;
+  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent-soft) 80%, #fff);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line-soft));
+}
+
+.android-app .todo-compose-main > button.primary,
+.android-app .android-page-head .primary {
+  border-radius: 999px;
+  box-shadow: none;
 }
 
 .android-app .today-page > .actions button.primary {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
   order: -1;
 }
 
 .android-app .today-page > h2 {
-  margin: 18px 0 8px;
-  font-size: 14px;
-  font-weight: 650;
+  margin: 20px 0 8px;
+  font-size: 15px;
+  font-weight: 700;
   letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .android-app .today-section-divider {
@@ -392,6 +500,131 @@
   padding: 10px 2px 4px;
   font-size: 13px;
   line-height: 1.45;
+}
+
+/* ——— Bottom sheet picker ——— */
+
+.android-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  background: rgba(30, 40, 48, 0.36);
+  backdrop-filter: blur(2px);
+  animation: android-fade-in 160ms var(--ease);
+}
+
+.android-sheet {
+  width: min(100vw, 560px);
+  max-height: min(72dvh, 560px);
+  display: flex;
+  flex-direction: column;
+  padding:
+    8px 16px
+    calc(16px + var(--android-safe-bottom))
+    16px;
+  border-radius: 22px 22px 0 0;
+  background: var(--surface-bright);
+  box-shadow: 0 -12px 40px rgba(42, 54, 64, 0.16);
+  animation: android-sheet-up 220ms var(--ease);
+}
+
+.android-sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 4px auto 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink-whisper) 70%, transparent);
+}
+
+.android-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.android-sheet-head h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.android-sheet-head .quiet {
+  min-height: 36px;
+  border-radius: 999px;
+}
+
+.android-sheet-list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.android-sheet-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 14px;
+  text-align: left;
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface) 55%, #fff);
+  box-shadow: none;
+}
+
+.android-sheet-item:active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line-soft));
+}
+
+.android-sheet-item-kind {
+  grid-row: 1 / span 2;
+  align-self: center;
+  min-width: 40px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-size: 11px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.android-sheet-item-title {
+  grid-column: 2;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.android-sheet-item-meta {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+@keyframes android-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes android-sheet-up {
+  from { transform: translateY(18%); opacity: 0.7; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
 /* ——— Lists / rows ——— */
@@ -416,11 +649,10 @@
 .android-app .list .row > button {
   min-height: 36px;
   padding: 6px 12px;
-  border-radius: 9px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
-/* Touch: always show row tools (hover is useless) */
 .android-app .sub-row .pin-top,
 .android-app .sub-row .row-delete {
   opacity: 0.72;
@@ -495,7 +727,7 @@
   flex: 0 0 auto;
   min-height: 42px;
   padding: 8px 14px;
-  border-radius: 10px;
+  border-radius: 999px;
 }
 
 .android-app .todo-schedule-chips {
@@ -570,10 +802,10 @@
 .android-app input,
 .android-app select,
 .android-app textarea {
-  font-size: 16px; /* avoid focus zoom */
+  font-size: 16px;
   min-height: 42px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .android-app textarea {
@@ -592,7 +824,7 @@
   width: min(100vw - 20px, 420px);
   max-height: min(84dvh, 640px);
   overflow: auto;
-  border-radius: 16px 16px 12px 12px;
+  border-radius: 18px 18px 14px 14px;
 }
 
 .android-app .modal-backdrop {
@@ -607,4 +839,209 @@
 .android-app .note {
   font-size: 13px;
   line-height: 1.45;
+}
+
+/* ——— Phone surfaces: wrap, cards, no desktop nowrap ——— */
+
+.android-app,
+.android-main,
+.android-app section,
+.android-app form {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.android-app .lead,
+.android-app .todos-lead,
+.android-app .today-page > .lead {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.android-app .todo-compose {
+  margin: 14px 0 16px;
+  padding: 12px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: var(--shadow-plate);
+}
+
+.android-app .todo-compose-main {
+  min-width: 0;
+}
+
+.android-app .todo-compose-main input {
+  min-width: 0;
+}
+
+.android-app .todo-compose-main > button {
+  border-radius: 999px;
+}
+
+.android-app .todo-compose-meta,
+.android-app .todo-schedule,
+.android-app .todo-schedule-icons,
+.android-app .todo-schedule-chips {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.android-app .todo-compose-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.android-app .todo-affil-toggle {
+  flex: none;
+  width: 100%;
+  white-space: normal;
+  min-height: 40px;
+  padding: 8px 12px;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface) 70%, #fff);
+  color: var(--ink-soft);
+}
+
+.android-app .todo-icon-btn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 70%, #fff);
+}
+
+.android-app .todo-chip {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.android-app .list {
+  gap: 8px;
+}
+
+.android-app .list .row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-bright) 92%, var(--surface));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+.android-app .list .row .actions {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.android-app .todo-link-btn {
+  min-height: 40px !important;
+  padding: 8px 14px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface) 65%, #fff);
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.android-app .todo-link-btn,
+.android-app .todo-title-open,
+.android-app .todo-affil-link,
+.android-app .title-button,
+.android-app .add-inline,
+.android-app button.back,
+.android-app button.quiet {
+  min-height: 0;
+}
+
+.android-app .todo-check {
+  grid-template-columns: 22px minmax(0, 1fr);
+  width: 100%;
+}
+
+.android-app .project-section {
+  margin-top: 16px !important;
+  padding: 14px 14px 8px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.android-app .project-header {
+  padding: 4px 2px 14px;
+  border-bottom: none;
+}
+
+.android-app .facts {
+  gap: 6px 12px;
+}
+
+.android-app .stack {
+  max-width: none;
+}
+
+.android-app .android-main > section > .stack {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.android-app .settings-actions-mobile {
+  display: grid !important;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.android-app .settings-actions-mobile > button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  justify-content: center;
+}
+
+.android-app .settings-advanced-toggle {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+
+.android-app .project-danger-zone {
+  margin: 18px 0 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--line-soft));
+  background: color-mix(in srgb, #fff 82%, #f8e8e4);
+}
+
+.android-app .project-danger-zone .project-delete {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  color: var(--danger);
+  justify-content: center;
+}
+
+.android-app .plate-deck {
+  gap: 8px;
+}
+
+.android-app .android-tab-icon svg {
+  stroke-width: 2;
+}
+
+.android-app .android-sheet-item {
+  min-height: 60px;
 }

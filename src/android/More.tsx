@@ -1,14 +1,18 @@
-type MorePage = "progress" | "weekly" | "settings";
+type MorePage = "settings";
 
 const LINKS: { id: MorePage; title: string; hint: string }[] = [
-  { id: "progress", title: "进度总览", hint: "各项目完成度一眼看完" },
-  { id: "weekly", title: "周回顾", hint: "本周堆积与停滞事项" },
   { id: "settings", title: "设置", hint: "模型、同步与数据" },
 ];
 
-export function More({ onOpen }: { onOpen: (page: MorePage) => void }) {
+export function More({ onOpen }: { onOpen: (page?: MorePage) => void }) {
   return (
     <section className="android-more">
+      <header className="android-page-head">
+        <div className="android-page-head-copy">
+          <h1>更多</h1>
+          <p className="lead">账号与偏好</p>
+        </div>
+      </header>
       <div className="android-list">
         {LINKS.map((link) => (
           <button
