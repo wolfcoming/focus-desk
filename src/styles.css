@@ -153,12 +153,92 @@ textarea.log-input {
   gap: 8px;
   overflow: hidden;
 }
+.brand.account-chip {
+  display: block;
+  width: 100%;
+  padding: 6px 4px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.account-chip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+}
+.account-name-btn {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+}
+.account-name-btn:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent-deep);
+}
+.account-chip-row .account-name-btn {
+  flex: 0 1 auto;
+  max-width: calc(100% - 28px);
+}
+.account-chip-row strong.is-empty {
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+.account-sync-btn {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-deep);
+  box-shadow: none;
+}
+.account-sync-btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent-deep);
+  opacity: 1;
+}
+.account-sync-btn:disabled {
+  opacity: 0.55;
+}
+.account-sync-btn.is-busy .account-sync-icon {
+  animation: account-sync-spin 0.9s linear infinite;
+}
+.account-sync-icon {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+@keyframes account-sync-spin {
+  to { transform: rotate(360deg); }
+}
 .brand strong {
   display: block;
   font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brand span, .muted, .meta { color: var(--ink-soft); }
 .brand span {
@@ -166,6 +246,41 @@ textarea.log-input {
   margin-top: 4px;
   font-size: 12px;
   letter-spacing: 0.02em;
+}
+.auth-page { max-width: 420px; }
+.auth-card {
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface-bright);
+  box-shadow: var(--shadow-plate);
+}
+.auth-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.auth-tabs button {
+  flex: 1;
+  padding: 8px 10px;
+}
+.auth-tabs button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+.auth-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+.auth-identity strong {
+  font-size: 18px;
+}
+.auth-identity span {
+  color: var(--ink-soft);
+  font-size: 13px;
 }
 .nav-group {
   display: flex;
@@ -184,12 +299,45 @@ textarea.log-input {
 }
 .nav-label {
   flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
   text-transform: none;
-  color: var(--ink-whisper);
+  color: var(--ink-faint);
   padding: 8px 8px 4px;
+}
+.nav-label-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}
+.nav-label-row .nav-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.nav-add-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-deep);
+}
+.nav-add-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+}
+.nav-add-icon:hover {
+  background: rgba(255, 255, 255, 0.7);
 }
 .nav-group:first-child .nav-label { padding-top: 2px; }
 .nav-group .tree-project,
@@ -209,10 +357,6 @@ textarea.log-input {
   margin: 0;
   padding-right: 2px;
   overscroll-behavior: contain;
-}
-.nav-group-projects > .tree-add {
-  flex: 0 0 auto;
-  margin-top: 4px;
 }
 .nav-group.nav-group-footer {
   flex: 0 0 auto;
@@ -323,6 +467,38 @@ button.row-open:hover h3 { color: var(--accent-deep); }
   min-width: 0;
 }
 .project-heading h1 { margin: 0; }
+.project-edit-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  margin-left: 2px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-faint);
+}
+.project-edit-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.project-edit-icon:hover {
+  color: var(--accent-deep);
+  border-color: var(--line-soft);
+  background: color-mix(in srgb, var(--accent-soft) 55%, #fff);
+}
+.project-info-edit {
+  margin-top: 12px;
+  max-width: 520px;
+}
 .project-header-actions { flex: 0 0 auto; justify-content: flex-end; }
 .status-chip {
   display: inline-flex;
@@ -346,6 +522,88 @@ button.row-open:hover h3 { color: var(--accent-deep); }
 .project-section {
   padding: 20px 0 4px;
   border-top: 1px solid var(--line-soft);
+}
+.settings-panel {
+  margin-top: 18px;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72)),
+    var(--surface-bright);
+  box-shadow: var(--shadow-plate);
+}
+.settings-panel + .settings-panel {
+  margin-top: 22px;
+}
+.settings-panel-account {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 55%, #fff), rgba(255, 255, 255, 0.82)),
+    var(--surface-bright);
+}
+.settings-panel-model {
+  border-color: var(--line);
+}
+.settings-panel .section-head {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.settings-panel .section-head h2 {
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+.settings-account-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-account-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.settings-account-key {
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+.settings-account-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.settings-account-value.is-empty {
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+.settings-account-value-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-account-value-row .settings-account-value {
+  flex: 1 1 auto;
+}
+.settings-account-edit-btn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.settings-account-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.settings-account-edit input {
+  flex: 1 1 160px;
+  min-width: 0;
 }
 .project-header + .project-section { border-top: 0; padding-top: 16px; }
 .section-head {
@@ -1489,11 +1747,40 @@ textarea.idea-card-body:focus-visible {
 @keyframes rise {
   from { opacity: 0; transform: translateY(8px); }
 }
+.desk-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 80;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(42, 54, 64, 0.92);
+  color: #f4f8fb;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 10px 28px rgba(42, 54, 64, 0.22);
+  transform: translateX(-50%);
+  animation: toast-in 180ms var(--ease);
+  pointer-events: none;
+}
+.desk-toast-error {
+  background: rgba(122, 48, 36, 0.94);
+  border-color: rgba(155, 59, 42, 0.45);
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
 @media (prefers-reduced-motion: reduce) {
   .chevron, .plate { transition: none; }
   .plate.lit { animation: none; }
   .modal { animation: none; }
   .ai-busy-dot { animation: none; }
+  .desk-toast { animation: none; }
+  .account-sync-btn.is-busy .account-sync-icon { animation: none; }
 }
 
 .reminder {

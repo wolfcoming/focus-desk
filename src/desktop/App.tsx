@@ -1,15 +1,35 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { Auth } from "../Auth";
 import { api, message } from "../api";
 import { Settings } from "../Settings";
 import { ProjectOverlays, Projects } from "../Projects";
 import { Today } from "../Today";
 import { Todos } from "../Todos";
 import type { Project } from "../types";
-import { ErrorText } from "../widgets";
+import { ErrorText, showToast } from "../widgets";
 import { fetchRailQuote, localQuoteOfDay, type Quote } from "../quotes";
 
-type Page = "today" | "todos" | "projects" | "settings";
+type Page = "today" | "todos" | "projects" | "settings" | "auth";
+
+function SyncIcon() {
+  return (
+    <svg className="account-sync-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7.5 7.2A6.4 6.4 0 0 1 18.7 9.5" />
+      <path d="M17.2 6.2v3.4h-3.4" />
+      <path d="M16.5 16.8A6.4 6.4 0 0 1 5.3 14.5" />
+      <path d="M6.8 17.8v-3.4h3.4" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5.5v13M5.5 12h13" />
+    </svg>
+  );
+}
 
 export function DesktopApp() {
   const [page, setPage] = useState<Page>("today");
@@ -22,6 +42,9 @@ export function DesktopApp() {
   const [createProject, setCreateProject] = useState(false);
   const [deleteProject, setDeleteProject] = useState<Project | null>(null);
   const [quote, setQuote] = useState<Quote>(() => localQuoteOfDay());
+  const [signedIn, setSignedIn] = useState(false);
+  const [accountName, setAccountName] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
 
   useEffect(() => {
     void api.listProjects().then(setProjectRows).catch((reason) => setError(message(reason)));
@@ -30,6 +53,30 @@ export function DesktopApp() {
   useEffect(() => {
     void fetchRailQuote().then(setQuote);
   }, []);
+
+  useEffect(() => {
+    void api.syncStatus().then((status) => {
+      setSignedIn(status.signedIn);
+      setAccountName(status.signedIn ? (status.displayName?.trim() || "") : "");
+    }).catch(() => {});
+  }, [revision]);
+
+  async function runRailSync() {
+    if (syncBusy || !signedIn) return;
+    setSyncBusy(true);
+    setError("");
+    try {
+      const result = await api.syncNow();
+      window.dispatchEvent(new Event("desk-changed"));
+      showToast(`同步完成：推送 ${result.pushed}，拉取 ${result.pulled}`);
+    } catch (reason) {
+      const text = message(reason);
+      setError(text);
+      showToast(text, "error");
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   useEffect(() => {
     let unlistenChanged: (() => void) | undefined;
@@ -79,9 +126,33 @@ export function DesktopApp() {
   return (
     <div className="app">
       <aside className="rail">
-        <div className="brand">
-          <strong>Little Fun</strong>
-          <span>干净桌面 · 今日三件</span>
+        <div className="brand account-chip">
+          {signedIn ? (
+            <div className="account-chip-row">
+              <button
+                type="button"
+                className="account-name-btn"
+                onClick={() => setPage("settings")}
+              >
+                <strong className={accountName ? undefined : "is-empty"}>{accountName || "未设置"}</strong>
+              </button>
+              <button
+                type="button"
+                className={`account-sync-btn${syncBusy ? " is-busy" : ""}`}
+                aria-label={syncBusy ? "同步中" : "同步数据"}
+                title={syncBusy ? "同步中…" : "同步数据"}
+                disabled={syncBusy}
+                onClick={() => void runRailSync()}
+              >
+                <SyncIcon />
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="account-name-btn" onClick={() => setPage("auth")}>
+              <strong>登录</strong>
+              <span>同步项目与待办</span>
+            </button>
+          )}
         </div>
         <nav className="nav">
           <div className="nav-group">
@@ -93,7 +164,18 @@ export function DesktopApp() {
           <div className="nav-divider" role="separator" aria-hidden />
 
           <div className="nav-group nav-group-projects">
-            <div className="nav-label">项目</div>
+            <div className="nav-label-row">
+              <div className="nav-label">项目</div>
+              <button
+                type="button"
+                className="nav-add-icon"
+                aria-label="新建项目"
+                title="新建项目"
+                onClick={() => setCreateProject(true)}
+              >
+                <PlusIcon />
+              </button>
+            </div>
             <div className="tree tree-flat nav-projects-scroll">
               {projectRows.filter((project) => project.status !== "archived").map((project) => (
                 <button
@@ -106,7 +188,6 @@ export function DesktopApp() {
                 </button>
               ))}
             </div>
-            <button type="button" className="tree-add" onClick={() => { setCreateProject(true); }}>新建项目</button>
           </div>
 
           <div className="nav-divider" role="separator" aria-hidden />
@@ -143,7 +224,16 @@ export function DesktopApp() {
           onCreated={(project) => { setProjectId(project.id); setPage("projects"); setCreateProject(false); }}
           onDeleted={(id) => { setProjectId((current) => current === id ? null : current); setDeleteProject(null); }}
         />
-        {page === "settings" && <Settings revision={revision} />}
+        {page === "settings" && (
+          <Settings revision={revision} onRequestAuth={() => setPage("auth")} />
+        )}
+        {page === "auth" && (
+          <Auth
+            revision={revision}
+            onDone={() => setPage("settings")}
+            onOpenSettings={() => setPage("settings")}
+          />
+        )}
       </main>
     </div>
   );

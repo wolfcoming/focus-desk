@@ -619,3 +619,44 @@ export function TodoScheduleBar({
     </div>
   );
 }
+
+type ToastKind = "ok" | "error";
+type ToastPayload = { message: string; kind?: ToastKind };
+
+const TOAST_EVENT = "desk-toast";
+
+export function showToast(message: string, kind: ToastKind = "ok") {
+  const text = message.trim();
+  if (!text) return;
+  window.dispatchEvent(new CustomEvent<ToastPayload>(TOAST_EVENT, { detail: { message: text, kind } }));
+}
+
+export function ToastHost() {
+  const [toast, setToast] = useState<{ id: number; message: string; kind: ToastKind } | null>(null);
+
+  useEffect(() => {
+    let hideTimer = 0;
+    function onToast(event: Event) {
+      const detail = (event as CustomEvent<ToastPayload>).detail;
+      if (!detail?.message?.trim()) return;
+      const id = Date.now();
+      setToast({ id, message: detail.message.trim(), kind: detail.kind ?? "ok" });
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => {
+        setToast((current) => (current?.id === id ? null : current));
+      }, 2800);
+    }
+    window.addEventListener(TOAST_EVENT, onToast);
+    return () => {
+      window.removeEventListener(TOAST_EVENT, onToast);
+      window.clearTimeout(hideTimer);
+    };
+  }, []);
+
+  if (!toast) return null;
+  return (
+    <div className={`desk-toast desk-toast-${toast.kind}`} role="status" aria-live="polite">
+      {toast.message}
+    </div>
+  );
+}

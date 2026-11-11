@@ -400,6 +400,30 @@ pub fn sync_local_id(conn: &Connection, collection: &str, client_id: &str) -> Re
     .map_err(|err| err.to_string())
 }
 
+/// Like sync_local_id, but drops stale mappings when the row was deleted locally.
+pub fn sync_live_local_id(conn: &Connection, collection: &str, client_id: &str) -> Result<Option<i64>, String> {
+    let Some(local_id) = sync_local_id(conn, collection, client_id)? else {
+        return Ok(None);
+    };
+    let table = match collection {
+        "projects" | "subprojects" | "items" | "work_logs" | "idea_tags" => collection,
+        _ => return Ok(Some(local_id)),
+    };
+    let exists: bool = conn
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)"),
+            params![local_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    if exists {
+        Ok(Some(local_id))
+    } else {
+        sync_unbind_client(conn, collection, client_id)?;
+        Ok(None)
+    }
+}
+
 pub fn sync_bind(conn: &Connection, collection: &str, local_id: i64, client_id: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO sync_ids (collection, local_id, client_id) VALUES (?1, ?2, ?3)
@@ -414,6 +438,15 @@ pub fn sync_unbind_client(conn: &Connection, collection: &str, client_id: &str) 
     conn.execute(
         "DELETE FROM sync_ids WHERE collection = ?1 AND client_id = ?2",
         params![collection, client_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn sync_unbind_local(conn: &Connection, collection: &str, local_id: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = ?1 AND local_id = ?2",
+        params![collection, local_id],
     )
     .map_err(|err| err.to_string())?;
     Ok(())
@@ -616,6 +649,36 @@ pub fn create_project(conn: &Connection, input: &NewProject) -> Result<Project, 
     let id = tx.last_insert_rowid();
     tx.commit().map_err(|err| err.to_string())?;
     get_project(conn, id)
+}
+
+pub fn update_project(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+    outcome: &str,
+) -> Result<Project, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("大项目需要一个名称".into());
+    }
+    let stamp = timeutil::now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE projects SET name = ?2, outcome = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, name, outcome.trim(), stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个大项目".into());
+    }
+    get_project(conn, id)
+}
+
+pub fn auto_remind_enabled(conn: &Connection) -> Result<bool, String> {
+    match get_setting(conn, "auto_remind")? {
+        None => Ok(true),
+        Some(value) => Ok(!matches!(value.trim(), "0" | "false" | "off" | "no")),
+    }
 }
 
 pub fn set_project_status(
@@ -1419,7 +1482,35 @@ fn purge_items(conn: &Connection, id_query: &str, id: i64) -> Result<(), String>
     run(format!("UPDATE activity_logs SET matched_item_id = NULL WHERE matched_item_id IN ({id_query})"))?;
     run(format!("UPDATE activity_logs SET incoming_item_id = NULL WHERE incoming_item_id IN ({id_query})"))?;
     run(format!("DELETE FROM reminder_state WHERE item_id IN ({id_query})"))?;
+    run(format!(
+        "DELETE FROM sync_ids WHERE collection = 'items' AND local_id IN ({id_query})"
+    ))?;
     run(format!("DELETE FROM items WHERE id IN ({id_query})"))
+}
+
+/// Cascade-delete a subproject without opening a nested transaction (safe inside sync apply).
+pub fn delete_subproject_rows(conn: &Connection, id: i64) -> Result<(), String> {
+    purge_items(conn, "SELECT id FROM items WHERE subproject_id = ?1", id)?;
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'work_logs' AND local_id IN (SELECT id FROM work_logs WHERE subproject_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute("DELETE FROM work_logs WHERE subproject_id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'idea_tags' AND local_id IN (SELECT id FROM idea_tags WHERE subproject_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute("DELETE FROM idea_tags WHERE subproject_id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    conn.execute("DELETE FROM reminder_state WHERE subproject_id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    sync_unbind_local(conn, "subprojects", id)?;
+    conn.execute("DELETE FROM subprojects WHERE id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 pub fn delete_subproject(conn: &Connection, id: i64) -> Result<(), String> {
@@ -1430,16 +1521,57 @@ pub fn delete_subproject(conn: &Connection, id: i64) -> Result<(), String> {
     if found != 1 {
         return Err("找不到这个子任务".into());
     }
-    purge_items(&tx, "SELECT id FROM items WHERE subproject_id = ?1", id)?;
-    tx.execute("DELETE FROM work_logs WHERE subproject_id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
-    tx.execute("DELETE FROM idea_tags WHERE subproject_id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
-    tx.execute("DELETE FROM reminder_state WHERE subproject_id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
-    tx.execute("DELETE FROM subprojects WHERE id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
+    delete_subproject_rows(&tx, id)?;
     tx.commit().map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Cascade-delete a project without opening a nested transaction (safe inside sync apply).
+pub fn delete_project_rows(conn: &Connection, id: i64) -> Result<(), String> {
+    purge_items(
+        conn,
+        "SELECT id FROM items WHERE project_id = ?1 OR subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        id,
+    )?;
+    conn.execute(
+        "DELETE FROM reminder_state WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'work_logs' AND local_id IN (
+           SELECT id FROM work_logs WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)
+         )",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM work_logs WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'idea_tags' AND local_id IN (
+           SELECT id FROM idea_tags WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)
+         )",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM idea_tags WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'subprojects' AND local_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute("DELETE FROM subprojects WHERE project_id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    sync_unbind_local(conn, "projects", id)?;
+    conn.execute("DELETE FROM projects WHERE id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -1451,32 +1583,13 @@ pub fn delete_project(conn: &Connection, id: i64) -> Result<(), String> {
     if found != 1 {
         return Err("找不到这个大项目".into());
     }
-    purge_items(
-        &tx,
-        "SELECT id FROM items WHERE project_id = ?1 OR subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
-        id,
-    )?;
-    tx.execute(
-        "DELETE FROM reminder_state WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
-        params![id],
-    )
-    .map_err(|err| err.to_string())?;
-    tx.execute(
-        "DELETE FROM work_logs WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
-        params![id],
-    )
-    .map_err(|err| err.to_string())?;
-    tx.execute(
-        "DELETE FROM idea_tags WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
-        params![id],
-    )
-    .map_err(|err| err.to_string())?;
-    tx.execute("DELETE FROM subprojects WHERE project_id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
-    tx.execute("DELETE FROM projects WHERE id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
+    delete_project_rows(&tx, id)?;
     tx.commit().map_err(|err| err.to_string())?;
     Ok(())
+}
+
+pub fn delete_item_rows(conn: &Connection, id: i64) -> Result<(), String> {
+    purge_items(conn, "SELECT ?1", id)
 }
 
 pub fn capture(conn: &Connection, title: &str) -> Result<Item, String> {

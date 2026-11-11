@@ -3,10 +3,13 @@ package com.focusdesk.sync.service;
 import com.focusdesk.sync.domain.UserAccount;
 import com.focusdesk.sync.repo.UserAccountRepository;
 import com.focusdesk.sync.security.JwtService;
+import com.focusdesk.sync.security.UserPrincipal;
 import com.focusdesk.sync.web.ApiException;
 import com.focusdesk.sync.web.dto.AuthDtos.AuthResponse;
 import com.focusdesk.sync.web.dto.AuthDtos.LoginRequest;
+import com.focusdesk.sync.web.dto.AuthDtos.ProfileResponse;
 import com.focusdesk.sync.web.dto.AuthDtos.RegisterRequest;
+import com.focusdesk.sync.web.dto.AuthDtos.UpdateProfileRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -33,9 +36,10 @@ public class AuthService {
     UserAccount user = new UserAccount();
     user.setEmail(email);
     user.setPasswordHash(passwordEncoder.encode(request.password()));
+    user.setDisplayName(normalizeDisplayName(request.displayName()));
     users.save(user);
     String token = jwtService.issue(user.getId(), user.getEmail(), user.getRole());
-    return new AuthResponse(token, user.getId(), user.getEmail());
+    return toAuth(user, token);
   }
 
   @Transactional(readOnly = true)
@@ -47,6 +51,36 @@ public class AuthService {
       throw new ApiException(HttpStatus.UNAUTHORIZED, "邮箱或密码不正确");
     }
     String token = jwtService.issue(user.getId(), user.getEmail(), user.getRole());
-    return new AuthResponse(token, user.getId(), user.getEmail());
+    return toAuth(user, token);
+  }
+
+  @Transactional(readOnly = true)
+  public ProfileResponse me(UserPrincipal principal) {
+    UserAccount user = users.findById(principal.getId())
+        .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "请先登录"));
+    return toProfile(user);
+  }
+
+  @Transactional
+  public ProfileResponse updateProfile(UserPrincipal principal, UpdateProfileRequest request) {
+    UserAccount user = users.findById(principal.getId())
+        .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "请先登录"));
+    user.setDisplayName(normalizeDisplayName(request.displayName()));
+    users.save(user);
+    return toProfile(user);
+  }
+
+  private static String normalizeDisplayName(String value) {
+    if (value == null) return null;
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  private static AuthResponse toAuth(UserAccount user, String token) {
+    return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName());
+  }
+
+  private static ProfileResponse toProfile(UserAccount user) {
+    return new ProfileResponse(user.getId(), user.getEmail(), user.getDisplayName());
   }
 }

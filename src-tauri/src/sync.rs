@@ -13,6 +13,7 @@ const DEFAULT_BASE: &str = "http://47.93.153.219:8081";
 pub struct SyncStatusView {
     pub base_url: String,
     pub email: Option<String>,
+    pub display_name: Option<String>,
     pub signed_in: bool,
     pub last_sync_at: Option<String>,
     pub cursor: Option<String>,
@@ -43,6 +44,15 @@ struct SyncChangeOut {
 struct AuthResponse {
     token: String,
     email: String,
+    #[serde(default, rename = "displayName")]
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ProfileResponse {
+    email: String,
+    #[serde(default, rename = "displayName")]
+    display_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +90,9 @@ pub fn status(conn: &Connection) -> Result<SyncStatusView, String> {
     Ok(SyncStatusView {
         base_url: base_url(conn)?,
         email: db::get_setting(conn, "sync_email")?,
+        display_name: db::get_setting(conn, "sync_display_name")?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         signed_in: has_token()?,
         last_sync_at: db::get_setting(conn, "sync_last_at")?,
         cursor: db::get_setting(conn, "sync_cursor")?,
@@ -116,27 +129,51 @@ fn save_token(token: &str) -> Result<(), String> {
     crate::secret::set(SERVICE, TOKEN_ACCOUNT, token)
 }
 
-pub async fn register(conn_path: &std::path::Path, email: &str, password: &str) -> Result<SyncStatusView, String> {
-    auth_call(conn_path, "register", email, password).await
+pub async fn register(
+    conn_path: &std::path::Path,
+    email: &str,
+    password: &str,
+    display_name: Option<&str>,
+) -> Result<SyncStatusView, String> {
+    auth_call(conn_path, "register", email, password, display_name).await
 }
 
-pub async fn login(conn_path: &std::path::Path, email: &str, password: &str) -> Result<SyncStatusView, String> {
-    auth_call(conn_path, "login", email, password).await
+pub async fn login(
+    conn_path: &std::path::Path,
+    email: &str,
+    password: &str,
+) -> Result<SyncStatusView, String> {
+    auth_call(conn_path, "login", email, password, None).await
 }
 
-async fn auth_call(conn_path: &std::path::Path, path: &str, email: &str, password: &str) -> Result<SyncStatusView, String> {
+async fn auth_call(
+    conn_path: &std::path::Path,
+    path: &str,
+    email: &str,
+    password: &str,
+    display_name: Option<&str>,
+) -> Result<SyncStatusView, String> {
     let email = email.trim().to_lowercase();
     if email.is_empty() || password.len() < 8 {
         return Err("请填写邮箱，密码至少 8 位".into());
     }
+    let display_name = display_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
     let base = {
         let conn = db::open(conn_path)?;
         base_url(&conn)?
     };
     let url = format!("{base}/api/v1/auth/{path}");
+    let body = if path == "register" {
+        json!({ "email": email, "password": password, "displayName": display_name })
+    } else {
+        json!({ "email": email, "password": password })
+    };
     let response = reqwest::Client::new()
         .post(url)
-        .json(&json!({ "email": email, "password": password }))
+        .json(&body)
         .send()
         .await
         .map_err(|err| format!("连不上同步服务：{err}"))?;
@@ -149,19 +186,66 @@ async fn auth_call(conn_path: &std::path::Path, path: &str, email: &str, passwor
     save_token(&payload.token)?;
     let conn = db::open(conn_path)?;
     db::set_setting(&conn, "sync_email", &payload.email)?;
+    let name = payload
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(display_name.as_deref());
+    match name {
+        Some(value) => db::set_setting(&conn, "sync_display_name", value)?,
+        None => db::set_setting(&conn, "sync_display_name", "")?,
+    }
     status(&conn)
 }
 
 pub fn logout(conn: &Connection) -> Result<SyncStatusView, String> {
     save_token("")?;
+    db::set_setting(conn, "sync_display_name", "")?;
     status(conn)
+}
+
+pub async fn set_display_name(conn_path: &std::path::Path, display_name: &str) -> Result<SyncStatusView, String> {
+    let name = display_name.trim();
+    if name.chars().count() > 80 {
+        return Err("用户名最多 80 字".into());
+    }
+    let token = load_token()?;
+    let base = {
+        let conn = db::open(conn_path)?;
+        db::set_setting(&conn, "sync_display_name", name)?;
+        base_url(&conn)?
+    };
+    let url = format!("{base}/api/v1/auth/me");
+    let response = reqwest::Client::new()
+        .patch(url)
+        .bearer_auth(&token)
+        .json(&json!({ "displayName": if name.is_empty() { Value::Null } else { json!(name) } }))
+        .send()
+        .await
+        .map_err(|err| format!("连不上同步服务：{err}"))?;
+    // Local name is already saved. Cloud profile is best-effort until the
+    // server exposes PATCH /api/v1/auth/me (older builds return 404/"No static resource").
+    if response.status().is_success() {
+        if let Ok(profile) = response.json::<ProfileResponse>().await {
+            let conn = db::open(conn_path)?;
+            db::set_setting(&conn, "sync_email", &profile.email)?;
+            match profile.display_name.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                Some(value) => db::set_setting(&conn, "sync_display_name", value)?,
+                None => db::set_setting(&conn, "sync_display_name", "")?,
+            }
+            return status(&conn);
+        }
+    }
+    let conn = db::open(conn_path)?;
+    status(&conn)
 }
 
 pub async fn sync_now(conn_path: &std::path::Path) -> Result<SyncResultView, String> {
     let token = load_token()?;
-    let (base, since, changes) = {
+    let (base, changes) = {
         let conn = db::open(conn_path)?;
-        (base_url(&conn)?, db::get_setting(&conn, "sync_cursor")?, collect_push_changes(&conn)?)
+        (base_url(&conn)?, collect_push_changes(&conn)?)
     };
     let pushed = changes.len();
 
@@ -183,10 +267,9 @@ pub async fn sync_now(conn_path: &std::path::Path) -> Result<SyncResultView, Str
     let accepted = push_body.results.iter().filter(|item| item.status == "accepted").count();
     let rejected = push_body.results.len().saturating_sub(accepted);
 
-    let mut pull_url = format!("{base}/api/v1/sync/changes");
-    if let Some(cursor) = since.as_deref().filter(|value| !value.is_empty()) {
-        pull_url.push_str(&format!("?since={}", urlencoding_loose(cursor)));
-    }
+    // Full pull (no since): older clients stored cursors against client-side timestamps, which
+    // could hide newly pushed rows from other devices. Payload apply is idempotent by client_id.
+    let pull_url = format!("{base}/api/v1/sync/changes");
     let pull_response = client
         .get(pull_url)
         .bearer_auth(&token)
@@ -218,16 +301,6 @@ pub async fn sync_now(conn_path: &std::path::Path) -> Result<SyncResultView, Str
 
 fn timeutil_now() -> String {
     crate::timeutil::now_iso()
-}
-
-fn urlencoding_loose(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' | ':' => ch.to_string(),
-            _ => format!("%{:02X}", ch as u8),
-        })
-        .collect()
 }
 
 fn extract_error(body: &str) -> Option<String> {
@@ -502,17 +575,52 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
     Ok(out)
 }
 
+fn collection_rank(collection: &str) -> u8 {
+    match collection {
+        "projects" => 0,
+        "subprojects" => 1,
+        "items" => 2,
+        "work_logs" | "idea_tags" => 3,
+        _ => 9,
+    }
+}
+
+enum ApplyOutcome {
+    Applied,
+    Deferred,
+}
+
 fn apply_changes(conn: &Connection, changes: &[SyncChangeIn]) -> Result<(), String> {
+    let mut pending: Vec<&SyncChangeIn> = changes.iter().collect();
+    pending.sort_by_key(|change| collection_rank(&change.collection));
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
-    for change in changes {
-        match change.collection.as_str() {
-            "projects" => apply_project(&tx, change)?,
-            "subprojects" => apply_subproject(&tx, change)?,
-            "items" => apply_item(&tx, change)?,
-            "work_logs" => apply_work_log(&tx, change)?,
-            "idea_tags" => apply_idea_tag(&tx, change)?,
-            _ => {}
+    // Parents may land after children when ordered only by updated_at; retry deferred rows.
+    for _ in 0..6 {
+        if pending.is_empty() {
+            break;
         }
+        let batch = std::mem::take(&mut pending);
+        let before = batch.len();
+        for change in batch {
+            let outcome = match change.collection.as_str() {
+                "projects" => {
+                    apply_project(&tx, change)?;
+                    ApplyOutcome::Applied
+                }
+                "subprojects" => apply_subproject(&tx, change)?,
+                "items" => apply_item(&tx, change)?,
+                "work_logs" => apply_work_log(&tx, change)?,
+                "idea_tags" => apply_idea_tag(&tx, change)?,
+                _ => ApplyOutcome::Applied,
+            };
+            if matches!(outcome, ApplyOutcome::Deferred) {
+                pending.push(change);
+            }
+        }
+        if pending.is_empty() || pending.len() == before {
+            break;
+        }
+        pending.sort_by_key(|change| collection_rank(&change.collection));
     }
     tx.commit().map_err(|err| err.to_string())?;
     Ok(())
@@ -540,8 +648,9 @@ fn bool_num(payload: &Value, key: &str) -> i64 {
 
 fn apply_project(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
     if change.deleted {
-        if let Some(local_id) = db::sync_local_id(conn, "projects", &change.client_id)? {
-            let _ = conn.execute("DELETE FROM projects WHERE id = ?1", params![local_id]);
+        if let Some(local_id) = db::sync_live_local_id(conn, "projects", &change.client_id)? {
+            db::delete_project_rows(conn, local_id)?;
+        } else {
             db::sync_unbind_client(conn, "projects", &change.client_id)?;
         }
         return Ok(());
@@ -551,7 +660,7 @@ fn apply_project(conn: &Connection, change: &SyncChangeIn) -> Result<(), String>
     let status = text(&change.payload, "status");
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
     let updated_at = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
-    if let Some(local_id) = db::sync_local_id(conn, "projects", &change.client_id)? {
+    if let Some(local_id) = db::sync_live_local_id(conn, "projects", &change.client_id)? {
         conn.execute(
             "UPDATE projects SET name = ?2, outcome = ?3, status = ?4, updated_at = ?5 WHERE id = ?1",
             params![local_id, name, outcome, status, updated_at],
@@ -568,17 +677,18 @@ fn apply_project(conn: &Connection, change: &SyncChangeIn) -> Result<(), String>
     Ok(())
 }
 
-fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
+fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
     if change.deleted {
-        if let Some(local_id) = db::sync_local_id(conn, "subprojects", &change.client_id)? {
-            let _ = conn.execute("DELETE FROM subprojects WHERE id = ?1", params![local_id]);
+        if let Some(local_id) = db::sync_live_local_id(conn, "subprojects", &change.client_id)? {
+            db::delete_subproject_rows(conn, local_id)?;
+        } else {
             db::sync_unbind_client(conn, "subprojects", &change.client_id)?;
         }
-        return Ok(());
+        return Ok(ApplyOutcome::Applied);
     }
     let project_client_id = text(&change.payload, "projectClientId");
-    let Some(project_id) = db::sync_local_id(conn, "projects", project_client_id)? else {
-        return Ok(());
+    let Some(project_id) = db::sync_live_local_id(conn, "projects", project_client_id)? else {
+        return Ok(ApplyOutcome::Deferred);
     };
     let name = text(&change.payload, "name");
     let description = text(&change.payload, "description");
@@ -591,7 +701,7 @@ fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<(), Stri
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
     let updated_at = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
     let target_date = opt_text(&change.payload, "targetDate");
-    if let Some(local_id) = db::sync_local_id(conn, "subprojects", &change.client_id)? {
+    if let Some(local_id) = db::sync_live_local_id(conn, "subprojects", &change.client_id)? {
         conn.execute(
             "UPDATE subprojects SET project_id = ?2, name = ?3, description = ?4, status = ?5, kind = ?6,
              progress = ?7, progress_percent = ?8, sort_order = ?9, last_touched_at = ?10, updated_at = ?11, target_date = ?12
@@ -635,23 +745,30 @@ fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<(), Stri
         .map_err(|err| err.to_string())?;
         db::sync_bind(conn, "subprojects", conn.last_insert_rowid(), &change.client_id)?;
     }
-    Ok(())
+    Ok(ApplyOutcome::Applied)
 }
 
-fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
+fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
     if change.deleted {
-        if let Some(local_id) = db::sync_local_id(conn, "items", &change.client_id)? {
-            let _ = conn.execute("DELETE FROM items WHERE id = ?1", params![local_id]);
+        if let Some(local_id) = db::sync_live_local_id(conn, "items", &change.client_id)? {
+            db::delete_item_rows(conn, local_id)?;
+        } else {
             db::sync_unbind_client(conn, "items", &change.client_id)?;
         }
-        return Ok(());
+        return Ok(ApplyOutcome::Applied);
     }
     let project_id = match change.payload.get("projectClientId").and_then(|value| value.as_str()) {
-        Some(id) if !id.is_empty() => db::sync_local_id(conn, "projects", id)?,
+        Some(id) if !id.is_empty() => match db::sync_live_local_id(conn, "projects", id)? {
+            Some(local) => Some(local),
+            None => return Ok(ApplyOutcome::Deferred),
+        },
         _ => None,
     };
     let subproject_id = match change.payload.get("subprojectClientId").and_then(|value| value.as_str()) {
-        Some(id) if !id.is_empty() => db::sync_local_id(conn, "subprojects", id)?,
+        Some(id) if !id.is_empty() => match db::sync_live_local_id(conn, "subprojects", id)? {
+            Some(local) => Some(local),
+            None => return Ok(ApplyOutcome::Deferred),
+        },
         _ => None,
     };
     let kind = text(&change.payload, "kind");
@@ -666,7 +783,7 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
     let follow_up_at = opt_text(&change.payload, "followUpAt");
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
     let updated_at = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
-    if let Some(local_id) = db::sync_local_id(conn, "items", &change.client_id)? {
+    if let Some(local_id) = db::sync_live_local_id(conn, "items", &change.client_id)? {
         conn.execute(
             "UPDATE items SET kind = ?2, title = ?3, notes = ?4, project_id = ?5, subproject_id = ?6,
              important = ?7, urgent = ?8, due_at = ?9, status = ?10, repeat_days = ?11, waiting_on = ?12,
@@ -714,27 +831,30 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
         db::sync_bind(conn, "items", conn.last_insert_rowid(), &change.client_id)?;
     }
-    Ok(())
+    Ok(ApplyOutcome::Applied)
 }
 
-fn apply_work_log(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
+fn apply_work_log(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
     if change.deleted {
-        if let Some(local_id) = db::sync_local_id(conn, "work_logs", &change.client_id)? {
-            let _ = conn.execute("DELETE FROM work_logs WHERE id = ?1", params![local_id]);
+        if let Some(local_id) = db::sync_live_local_id(conn, "work_logs", &change.client_id)? {
+            conn.execute("DELETE FROM work_logs WHERE id = ?1", params![local_id])
+                .map_err(|err| err.to_string())?;
+            db::sync_unbind_local(conn, "work_logs", local_id)?;
+        } else {
             db::sync_unbind_client(conn, "work_logs", &change.client_id)?;
         }
-        return Ok(());
+        return Ok(ApplyOutcome::Applied);
     }
     let sub_client = text(&change.payload, "subprojectClientId");
-    let Some(subproject_id) = db::sync_local_id(conn, "subprojects", sub_client)? else {
-        return Ok(());
+    let Some(subproject_id) = db::sync_live_local_id(conn, "subprojects", sub_client)? else {
+        return Ok(ApplyOutcome::Deferred);
     };
     let body = text(&change.payload, "body");
     let progress = text(&change.payload, "progress");
     let progress_percent = change.payload.get("progressPercent").and_then(|value| value.as_i64());
     let kind = text(&change.payload, "kind");
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
-    if let Some(local_id) = db::sync_local_id(conn, "work_logs", &change.client_id)? {
+    if let Some(local_id) = db::sync_live_local_id(conn, "work_logs", &change.client_id)? {
         conn.execute(
             "UPDATE work_logs SET subproject_id = ?2, body = ?3, progress = ?4, progress_percent = ?5, kind = ?6, created_at = ?7 WHERE id = ?1",
             params![local_id, subproject_id, body, progress, progress_percent, kind, created_at],
@@ -749,20 +869,23 @@ fn apply_work_log(conn: &Connection, change: &SyncChangeIn) -> Result<(), String
         .map_err(|err| err.to_string())?;
         db::sync_bind(conn, "work_logs", conn.last_insert_rowid(), &change.client_id)?;
     }
-    Ok(())
+    Ok(ApplyOutcome::Applied)
 }
 
-fn apply_idea_tag(conn: &Connection, change: &SyncChangeIn) -> Result<(), String> {
+fn apply_idea_tag(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
     if change.deleted {
-        if let Some(local_id) = db::sync_local_id(conn, "idea_tags", &change.client_id)? {
-            let _ = conn.execute("DELETE FROM idea_tags WHERE id = ?1", params![local_id]);
+        if let Some(local_id) = db::sync_live_local_id(conn, "idea_tags", &change.client_id)? {
+            conn.execute("DELETE FROM idea_tags WHERE id = ?1", params![local_id])
+                .map_err(|err| err.to_string())?;
+            db::sync_unbind_local(conn, "idea_tags", local_id)?;
+        } else {
             db::sync_unbind_client(conn, "idea_tags", &change.client_id)?;
         }
-        return Ok(());
+        return Ok(ApplyOutcome::Applied);
     }
     let sub_client = text(&change.payload, "subprojectClientId");
-    let Some(subproject_id) = db::sync_local_id(conn, "subprojects", sub_client)? else {
-        return Ok(());
+    let Some(subproject_id) = db::sync_live_local_id(conn, "subprojects", sub_client)? else {
+        return Ok(ApplyOutcome::Deferred);
     };
     let body = text(&change.payload, "body");
     let color = text(&change.payload, "color");
@@ -771,7 +894,7 @@ fn apply_idea_tag(conn: &Connection, change: &SyncChangeIn) -> Result<(), String
     let pos_y = change.payload.get("posY").and_then(|value| value.as_f64()).unwrap_or(20.0);
     let z_index = change.payload.get("zIndex").and_then(|value| value.as_i64()).unwrap_or(0);
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
-    if let Some(local_id) = db::sync_local_id(conn, "idea_tags", &change.client_id)? {
+    if let Some(local_id) = db::sync_live_local_id(conn, "idea_tags", &change.client_id)? {
         conn.execute(
             "UPDATE idea_tags SET subproject_id = ?2, body = ?3, color = ?4, sort_order = ?5, pos_x = ?6, pos_y = ?7, z_index = ?8, created_at = ?9 WHERE id = ?1",
             params![local_id, subproject_id, body, color, sort_order, pos_x, pos_y, z_index, created_at],
@@ -786,5 +909,5 @@ fn apply_idea_tag(conn: &Connection, change: &SyncChangeIn) -> Result<(), String
         .map_err(|err| err.to_string())?;
         db::sync_bind(conn, "idea_tags", conn.last_insert_rowid(), &change.client_id)?;
     }
-    Ok(())
+    Ok(ApplyOutcome::Applied)
 }

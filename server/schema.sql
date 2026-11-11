@@ -20,6 +20,7 @@ CREATE TABLE `users` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `created_at` datetime(6) NOT NULL,
   `email` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `display_name` varchar(80) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `password_hash` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `updated_at` datetime(6) NOT NULL,
   `role` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,

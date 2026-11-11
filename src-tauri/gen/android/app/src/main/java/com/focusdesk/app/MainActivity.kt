@@ -3,6 +3,7 @@ package com.focusdesk.app
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
@@ -17,6 +18,7 @@ class MainActivity : TauriActivity() {
     // Match Android web shell --surface so status/nav/page share one color.
     val pageSurface = Color.parseColor("#f4f8fb")
     WindowCompat.setDecorFitsSystemWindows(window, true)
+    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
     @Suppress("DEPRECATION")
     window.statusBarColor = pageSurface
     @Suppress("DEPRECATION")

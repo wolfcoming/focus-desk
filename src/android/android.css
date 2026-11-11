@@ -6,6 +6,7 @@
   --android-safe-right: max(env(safe-area-inset-right, 0px), var(--sar, 0px));
   --android-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--sab, 0px));
   --android-safe-left: max(env(safe-area-inset-left, 0px), var(--sal, 0px));
+  --keyboard-inset: 0px;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
@@ -69,13 +70,22 @@
   padding:
     calc(var(--android-safe-top) + 14px)
     16px
-    calc(18px + var(--android-safe-bottom))
+    calc(18px + var(--android-safe-bottom) + var(--keyboard-inset))
     16px;
+  scroll-padding-bottom: calc(24px + var(--keyboard-inset));
 }
 
 .android-app.android-nested .android-main {
   padding-top: calc(var(--android-safe-top) + 56px);
-  padding-bottom: calc(22px + var(--android-safe-bottom));
+  padding-bottom: calc(22px + var(--android-safe-bottom) + var(--keyboard-inset));
+}
+
+.android-app.android-keyboard-open .android-tabbar {
+  display: none;
+}
+
+.android-app.android-keyboard-open {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* ——— Bottom nav: Material-like indicator, not card chrome ——— */
@@ -161,6 +171,88 @@
   margin: 2px 0 16px;
 }
 
+.android-mine-head {
+  margin-bottom: 14px;
+}
+
+.android-mine-profile {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 14px 14px 14px 12px;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line-soft));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.68)),
+    var(--surface-bright);
+  box-shadow: var(--shadow-plate);
+}
+
+.android-mine-profile:active {
+  background: color-mix(in srgb, var(--accent-soft) 36%, #fff);
+}
+
+.android-mine-avatar {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent-soft) 78%, #fff);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line-soft));
+}
+
+.android-mine-profile-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.android-mine-profile-copy strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.android-mine-profile-copy strong.is-empty {
+  color: var(--ink-faint);
+  font-weight: 650;
+}
+
+.android-mine-profile-copy span {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.android-mine-chevron {
+  color: var(--ink-faint);
+  font-size: 22px;
+  line-height: 1;
+  padding-right: 2px;
+}
+
+.android-mine-list {
+  margin-top: 4px;
+}
+
 .android-page-head-copy {
   min-width: 0;
 }
@@ -196,7 +288,7 @@
   min-height: 36px;
   margin-top: 4px;
   padding: 7px 14px;
-  border-radius: 999px;
+  border-radius: 8px;
   font-weight: 650;
   letter-spacing: 0.02em;
   color: var(--accent-deep);
@@ -221,7 +313,7 @@
   min-height: 36px;
   margin: 0 0 10px;
   padding: 6px 12px 6px 8px;
-  border-radius: 999px;
+  border-radius: 8px;
   border-color: transparent;
   background: color-mix(in srgb, var(--surface-bright) 70%, transparent);
   color: var(--accent-deep);
@@ -473,7 +565,7 @@
 
 .android-app .todo-compose-main > button.primary,
 .android-app .android-page-head .primary {
-  border-radius: 999px;
+  border-radius: 8px;
   box-shadow: none;
 }
 
@@ -727,7 +819,7 @@
   flex: 0 0 auto;
   min-height: 42px;
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: 8px;
 }
 
 .android-app .todo-schedule-chips {
@@ -862,7 +954,7 @@
 .android-app .todo-compose {
   margin: 14px 0 16px;
   padding: 12px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: var(--shadow-plate);
@@ -874,10 +966,11 @@
 
 .android-app .todo-compose-main input {
   min-width: 0;
+  border-radius: 8px;
 }
 
 .android-app .todo-compose-main > button {
-  border-radius: 999px;
+  border-radius: 8px;
 }
 
 .android-app .todo-compose-meta,
@@ -903,7 +996,7 @@
   min-height: 40px;
   padding: 8px 12px;
   text-align: left;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--surface) 70%, #fff);
   color: var(--ink-soft);
@@ -914,13 +1007,14 @@
   height: 36px;
   min-width: 36px;
   min-height: 36px;
-  border-radius: 999px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 70%, #fff);
 }
 
 .android-app .todo-chip {
   max-width: 100%;
   white-space: normal;
+  border-radius: 8px;
 }
 
 .android-app .list {
@@ -931,10 +1025,10 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.88);
-  border-radius: 16px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--surface-bright) 92%, var(--surface));
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
 }
@@ -942,12 +1036,14 @@
 .android-app .list .row .actions {
   justify-content: flex-start;
   gap: 8px;
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
 }
 
 .android-app .todo-link-btn {
-  min-height: 40px !important;
-  padding: 8px 14px !important;
-  border-radius: 999px !important;
+  min-height: 36px !important;
+  padding: 6px 12px !important;
+  border-radius: 8px !important;
   border: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--surface) 65%, #fff);
   color: var(--ink-soft);
@@ -972,7 +1068,7 @@
 .android-app .project-section {
   margin-top: 16px !important;
   padding: 14px 14px 8px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
   border: 1px solid rgba(255, 255, 255, 0.85);
 }
@@ -993,9 +1089,21 @@
 .android-app .android-main > section > .stack {
   margin-top: 14px;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--surface-bright) 78%, transparent);
   border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.android-app .project-header-actions > button {
+  border-radius: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface) 65%, #fff);
+}
+
+.android-app .status-chip {
+  border-radius: 8px;
 }
 
 .android-app .settings-actions-mobile {
@@ -1044,4 +1152,98 @@
 
 .android-app .android-sheet-item {
   min-height: 60px;
+}
+
+.android-app .todos-page-mobile {
+  padding-bottom: 72px;
+}
+
+.android-app .android-fab {
+  position: fixed;
+  right: calc(16px + var(--android-safe-right));
+  bottom: calc(var(--android-tabbar) + var(--android-safe-bottom) + 16px);
+  z-index: 35;
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 88%, #2f4a55);
+  color: var(--on-accent);
+  box-shadow: 0 10px 24px rgba(42, 54, 64, 0.22);
+}
+
+.android-app .android-fab svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.android-app .android-fab:active {
+  transform: scale(0.96);
+}
+
+.android-app .android-compose-sheet {
+  padding-top: 6px;
+}
+
+.android-app .android-compose-sheet .todo-compose {
+  margin: 0;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.android-app .todo-swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.android-app .todo-swipe-actions {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 88px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--danger) 88%, #5a1f16);
+}
+
+.android-app .todo-swipe-delete {
+  width: 88px;
+  min-height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.android-app .todo-swipe-front {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  transition: transform 120ms var(--ease);
+  touch-action: pan-y;
+}
+
+.android-app .todo-swipe-front.row {
+  border-radius: 12px;
+}
+
+.android-app .project-edit-icon {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
 }

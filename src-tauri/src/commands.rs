@@ -36,6 +36,7 @@ pub struct SettingsView {
     has_api_key: bool,
     autostart: bool,
     supports_autostart: bool,
+    auto_remind: bool,
     data_path: String,
 }
 
@@ -47,6 +48,7 @@ pub struct SettingsInput {
     api_key: Option<String>,
     clear_api_key: bool,
     autostart: bool,
+    auto_remind: bool,
 }
 
 fn connection(state: &State<'_, AppData>) -> Result<rusqlite::Connection, String> {
@@ -79,6 +81,17 @@ pub fn list_projects(state: State<'_, AppData>) -> Result<Vec<db::Project>, Stri
 pub fn create_project(state: State<'_, AppData>, input: NewProject) -> Result<db::Project, String> {
     let conn = connection(&state)?;
     db::create_project(&conn, &input)
+}
+
+#[tauri::command]
+pub fn update_project(
+    state: State<'_, AppData>,
+    id: i64,
+    name: String,
+    outcome: String,
+) -> Result<db::Project, String> {
+    let conn = connection(&state)?;
+    db::update_project(&conn, id, &name, &outcome)
 }
 
 #[tauri::command]
@@ -365,6 +378,7 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppData>) -> Result<Setting
         has_api_key: ai::has_api_key()?,
         autostart: autostart_enabled(&app),
         supports_autostart: cfg!(desktop),
+        auto_remind: db::auto_remind_enabled(&conn)?,
         data_path: state.db_path.display().to_string(),
     })
 }
@@ -420,6 +434,7 @@ pub fn save_settings(app: AppHandle, state: State<'_, AppData>, input: SettingsI
         }
     }
     apply_autostart(&app, input.autostart)?;
+    db::set_setting(&conn, "auto_remind", if input.auto_remind { "1" } else { "0" })?;
     get_settings(app, state)
 }
 
@@ -652,6 +667,7 @@ pub async fn sync_register(
     state: State<'_, AppData>,
     email: String,
     password: String,
+    display_name: Option<String>,
     base_url: Option<String>,
 ) -> Result<crate::sync::SyncStatusView, String> {
     let path = state.db_path.clone();
@@ -659,7 +675,7 @@ pub async fn sync_register(
         let conn = db::open(&path)?;
         crate::sync::set_base_url(&conn, &url)?;
     }
-    crate::sync::register(&path, &email, &password).await
+    crate::sync::register(&path, &email, &password, display_name.as_deref()).await
 }
 
 #[tauri::command]
@@ -681,6 +697,15 @@ pub async fn sync_login(
 pub fn sync_logout(state: State<'_, AppData>) -> Result<crate::sync::SyncStatusView, String> {
     let conn = connection(&state)?;
     crate::sync::logout(&conn)
+}
+
+#[tauri::command]
+pub async fn sync_set_display_name(
+    state: State<'_, AppData>,
+    display_name: String,
+) -> Result<crate::sync::SyncStatusView, String> {
+    let path = state.db_path.clone();
+    crate::sync::set_display_name(&path, &display_name).await
 }
 
 #[tauri::command]

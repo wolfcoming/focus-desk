@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api, message } from "../api";
 import { ProjectOverlays, Projects } from "../Projects";
+import { Auth } from "../Auth";
 import { Settings } from "../Settings";
 import { Today } from "../Today";
 import { Todos } from "../Todos";
@@ -11,6 +12,7 @@ import type { Project } from "../types";
 import { ErrorText } from "../widgets";
 import { More } from "./More";
 import {
+  HOME_TAB,
   isNested,
   readNavState,
   rootTab,
@@ -22,24 +24,26 @@ import {
 import { ProjectsHome } from "./ProjectsHome";
 import "./android.css";
 
+const TAB_ORDER: Tab[] = ["todos", "today", "projects", "more"];
+
 const TAB_LABEL: Record<Tab, string> = {
-  today: "今天",
   todos: "待办",
+  today: "今天",
   projects: "项目",
-  more: "更多",
+  more: "我的",
 };
 
 const TAB_ICON: Record<Tab, ReactNode> = {
-  today: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="4" y="5" width="16" height="15" rx="2.5" />
-      <path d="M8 3.5v3M16 3.5v3M4 9.5h16" />
-    </svg>
-  ),
   todos: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M9.5 7.5h10M9.5 12h10M9.5 16.5h10" />
       <path d="M5 7.5l1.2 1.2L8.2 6.5M5 12l1.2 1.2L8.2 11M5 16.5l1.2 1.2L8.2 15.5" />
+    </svg>
+  ),
+  today: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="15" rx="2.5" />
+      <path d="M8 3.5v3M16 3.5v3M4 9.5h16" />
     </svg>
   ),
   projects: (
@@ -50,9 +54,8 @@ const TAB_ICON: Record<Tab, ReactNode> = {
   ),
   more: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="6.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="17.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="8.2" r="3.2" />
+      <path d="M5.5 19.2c1.6-3.2 3.8-4.8 6.5-4.8s4.9 1.6 6.5 4.8" />
     </svg>
   ),
 };
@@ -63,11 +66,12 @@ function sameFrame(a: Frame, b: Frame) {
   if (a.type === "project" && b.type === "project") return a.id === b.id;
   if (a.type === "sub" && b.type === "sub") return a.projectId === b.projectId && a.subId === b.subId;
   if (a.type === "todo" && b.type === "todo") return a.id === b.id;
-  return a.type === "settings" && b.type === "settings";
+  if (a.type === "settings" && b.type === "settings") return true;
+  return a.type === "auth" && b.type === "auth";
 }
 
 export function AndroidApp() {
-  const [stack, setStack] = useState<Frame[]>([{ type: "tab", tab: "today" }]);
+  const [stack, setStack] = useState<Frame[]>([{ type: "tab", tab: HOME_TAB }]);
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState("");
   const [projectRows, setProjectRows] = useState<Project[]>([]);
@@ -127,7 +131,76 @@ export function AndroidApp() {
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
-    writeHistory([{ type: "tab", tab: "today" }], "replace");
+    writeHistory([{ type: "tab", tab: HOME_TAB }], "replace");
+  }, []);
+
+  // Keep focused inputs above the soft keyboard (Android WebView).
+  useEffect(() => {
+    const root = document.documentElement;
+    let focusTimer = 0;
+
+    function keyboardInset() {
+      const viewport = window.visualViewport;
+      if (!viewport) return 0;
+      return Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop));
+    }
+
+    function applyKeyboardInset() {
+      const inset = keyboardInset();
+      root.style.setProperty("--keyboard-inset", `${inset}px`);
+      document.querySelector(".android-app")?.classList.toggle("android-keyboard-open", inset > 80);
+    }
+
+    function scrollFocusedIntoView() {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement)) return;
+      if (!active.matches("input, textarea, select")) return;
+      const main = document.querySelector(".android-main");
+      if (!(main instanceof HTMLElement)) return;
+      window.clearTimeout(focusTimer);
+      focusTimer = window.setTimeout(() => {
+        applyKeyboardInset();
+        const rect = active.getBoundingClientRect();
+        const mainRect = main.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const visibleBottom = viewport
+          ? viewport.offsetTop + viewport.height - 16
+          : window.innerHeight - 16;
+        const targetBottom = Math.min(mainRect.bottom - 12, visibleBottom);
+        if (rect.bottom > targetBottom || rect.top < mainRect.top + 12) {
+          active.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+        }
+      }, 60);
+    }
+
+    function onViewportChange() {
+      applyKeyboardInset();
+      scrollFocusedIntoView();
+    }
+
+    function onFocusOut() {
+      window.clearTimeout(focusTimer);
+      focusTimer = window.setTimeout(applyKeyboardInset, 120);
+    }
+
+    applyKeyboardInset();
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", onViewportChange);
+    viewport?.addEventListener("scroll", applyKeyboardInset);
+    window.addEventListener("focusin", scrollFocusedIntoView);
+    window.addEventListener("focusout", onFocusOut);
+    window.addEventListener("resize", applyKeyboardInset);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      viewport?.removeEventListener("resize", onViewportChange);
+      viewport?.removeEventListener("scroll", applyKeyboardInset);
+      window.removeEventListener("focusin", scrollFocusedIntoView);
+      window.removeEventListener("focusout", onFocusOut);
+      window.removeEventListener("resize", applyKeyboardInset);
+      root.style.setProperty("--keyboard-inset", "0px");
+      document.querySelector(".android-app")?.classList.remove("android-keyboard-open");
+    };
   }, []);
 
   useEffect(() => {
@@ -320,9 +393,22 @@ export function AndroidApp() {
           />
         )}
         {top.type === "tab" && top.tab === "more" && (
-          <More onOpen={() => pushFrame({ type: "settings" })} />
+          <More
+            revision={revision}
+            onOpenSettings={() => pushFrame({ type: "settings" })}
+            onOpenAuth={() => pushFrame({ type: "auth" })}
+          />
         )}
-        {top.type === "settings" && <Settings revision={revision} />}
+        {top.type === "settings" && (
+          <Settings revision={revision} onRequestAuth={() => pushFrame({ type: "auth" })} />
+        )}
+        {top.type === "auth" && (
+          <Auth
+            revision={revision}
+            onDone={() => replaceStack([{ type: "tab", tab: "more" }])}
+            onOpenSettings={() => replaceStack([{ type: "tab", tab: "more" }, { type: "settings" }])}
+          />
+        )}
 
         <ProjectOverlays
           createOpen={createProject}
@@ -346,7 +432,7 @@ export function AndroidApp() {
 
       {showTabs && (
         <nav className="android-tabbar" aria-label="主导航">
-          {(Object.keys(TAB_LABEL) as Tab[]).map((tab) => (
+          {TAB_ORDER.map((tab) => (
             <button
               key={tab}
               type="button"

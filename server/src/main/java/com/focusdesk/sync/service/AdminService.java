@@ -59,7 +59,7 @@ public class AdminService {
       throw new ApiException(HttpStatus.FORBIDDEN, "这个账号没有管理权限");
     }
     String token = jwtService.issue(user.getId(), user.getEmail(), user.getRole());
-    return new AuthResponse(token, user.getId(), user.getEmail());
+    return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName());
   }
 
   @Transactional(readOnly = true)

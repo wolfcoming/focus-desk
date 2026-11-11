@@ -266,6 +266,9 @@ export function Projects({
   ideaTagsRef.current = ideaTags;
   const ideaSavedBodyRef = useRef<Map<number, string>>(new Map());
   const [editingInfo, setEditingInfo] = useState(false);
+  const [editingProject, setEditingProject] = useState(false);
+  const [projectNameDraft, setProjectNameDraft] = useState("");
+  const [projectOutcomeDraft, setProjectOutcomeDraft] = useState("");
 
   async function load() {
     const [nextProjects, nextSubs, nextLogs, nextTodos] = await Promise.all([
@@ -391,6 +394,7 @@ export function Projects({
   }
 
   useEffect(() => {
+    setEditingProject(false);
     setDoneOpen(false);
     setLogsOpen(false);
     setPlacingIdea(null);
@@ -674,6 +678,25 @@ export function Projects({
             <div className="project-header-top">
               <div className="project-heading">
                 <h1>{current.name}</h1>
+                {!editingProject && (
+                  <button
+                    type="button"
+                    className="project-edit-icon"
+                    aria-label="修改项目信息"
+                    title="修改项目信息"
+                    onClick={() => {
+                      setProjectNameDraft(current.name);
+                      setProjectOutcomeDraft(current.outcome ?? "");
+                      setEditingProject(true);
+                      setError("");
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 20h4.5L19 9.5 14.5 5 4 15.5V20z" />
+                      <path d="M13.2 6.3l4.5 4.5" />
+                    </svg>
+                  </button>
+                )}
               </div>
               {!isAndroid() && (
                 <div className="actions project-header-actions">
@@ -681,13 +704,61 @@ export function Projects({
                 </div>
               )}
             </div>
-            <p className="lead">{current.outcome || "还没有写描述。"}</p>
-            <div className="facts">
-              <span>建立于 {when(current.createdAt)}</span>
-              <span>子任务 {mine.length}</span>
-              <span>未完成 {doingCount + regularMine.filter((sub) => progressOf(sub) === "not_started").length}</span>
-              <span>已完成 {doneCount}</span>
-            </div>
+            {editingProject ? (
+              <form
+                className="stack detail-form project-info-edit"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const nextName = projectNameDraft.trim();
+                  if (!nextName) return;
+                  void run(async () => {
+                    await api.updateProject(current.id, nextName, projectOutcomeDraft.trim());
+                    setEditingProject(false);
+                  });
+                }}
+              >
+                <Field label="名称">
+                  <input
+                    autoFocus
+                    value={projectNameDraft}
+                    onChange={(event) => setProjectNameDraft(event.target.value)}
+                  />
+                </Field>
+                <Field label="项目描述">
+                  <textarea
+                    rows={3}
+                    value={projectOutcomeDraft}
+                    placeholder="补充目标或说明，可空"
+                    onChange={(event) => setProjectOutcomeDraft(event.target.value)}
+                  />
+                </Field>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="quiet"
+                    onClick={() => {
+                      setEditingProject(false);
+                      setError("");
+                    }}
+                  >
+                    取消
+                  </button>
+                  <button className="primary" type="submit" disabled={busy || !projectNameDraft.trim()}>
+                    保存
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <p className="lead">{current.outcome || "还没有写描述。"}</p>
+                <div className="facts">
+                  <span>建立于 {when(current.createdAt)}</span>
+                  <span>子任务 {mine.length}</span>
+                  <span>未完成 {doingCount + regularMine.filter((sub) => progressOf(sub) === "not_started").length}</span>
+                  <span>已完成 {doneCount}</span>
+                </div>
+              </>
+            )}
             <ErrorText text={error} />
           </header>
 

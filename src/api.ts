@@ -35,6 +35,8 @@ export const api = {
   listProjects: () => invoke<Project[]>("list_projects"),
   createProject: (input: { name: string; outcome: string; status: string }) =>
     invoke<Project>("create_project", { input }),
+  updateProject: (id: number, name: string, outcome: string) =>
+    invoke<Project>("update_project", { id, name, outcome }),
   setProjectStatus: (id: number, status: string) =>
     invoke<Project>("set_project_status", { id, status }),
   listSubprojects: (projectId: number | null) => invoke<Subproject[]>("list_subprojects", { projectId }),
@@ -103,6 +105,7 @@ export const api = {
     apiKey: string | null;
     clearApiKey: boolean;
     autostart: boolean;
+    autoRemind: boolean;
   }) => invoke<SettingsView>("save_settings", { input }),
   activeReminder: () => invoke<Reminder | null>("active_reminder"),
   acknowledgeReminder: () => invoke<void>("acknowledge_reminder"),
@@ -121,10 +124,17 @@ export const api = {
   loadDemo: () => invoke<void>("load_demo"),
   syncStatus: () => invoke<SyncStatusView>("get_sync_status"),
   setSyncBaseUrl: (baseUrl: string) => invoke<SyncStatusView>("set_sync_base_url", { baseUrl }),
-  syncRegister: (email: string, password: string, baseUrl?: string | null) =>
-    invoke<SyncStatusView>("sync_register", { email, password, baseUrl: baseUrl ?? null }),
+  syncRegister: (email: string, password: string, displayName?: string | null, baseUrl?: string | null) =>
+    invoke<SyncStatusView>("sync_register", {
+      email,
+      password,
+      displayName: displayName ?? null,
+      baseUrl: baseUrl ?? null,
+    }),
   syncLogin: (email: string, password: string, baseUrl?: string | null) =>
     invoke<SyncStatusView>("sync_login", { email, password, baseUrl: baseUrl ?? null }),
   syncLogout: () => invoke<SyncStatusView>("sync_logout"),
+  syncSetDisplayName: (displayName: string) =>
+    invoke<SyncStatusView>("sync_set_display_name", { displayName }),
   syncNow: () => invoke<SyncResultView>("sync_now"),
 };

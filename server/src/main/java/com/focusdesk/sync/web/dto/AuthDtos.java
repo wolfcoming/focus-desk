@@ -14,7 +14,10 @@ public final class AuthDtos {
 
       @NotBlank(message = "密码不能为空")
       @Size(min = 8, max = 72, message = "密码长度需 8~72 位")
-      String password
+      String password,
+
+      @Size(max = 80, message = "用户名最多 80 字")
+      String displayName
   ) {}
 
   public record LoginRequest(
@@ -26,5 +29,12 @@ public final class AuthDtos {
       String password
   ) {}
 
-  public record AuthResponse(String token, Long userId, String email) {}
+  public record UpdateProfileRequest(
+      @Size(max = 80, message = "用户名最多 80 字")
+      String displayName
+  ) {}
+
+  public record AuthResponse(String token, Long userId, String email, String displayName) {}
+
+  public record ProfileResponse(Long userId, String email, String displayName) {}
 }

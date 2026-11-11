@@ -49,17 +49,27 @@ pub fn run() {
 
             app.manage(AppData { db_path: db_path.clone() });
 
-            if let Ok(Some(reminder)) = schedule::pending(&db_path) {
-                present(app.handle(), &reminder);
+            if let Ok(conn) = db::open(&db_path) {
+                if db::auto_remind_enabled(&conn).unwrap_or(true) {
+                    if let Ok(Some(reminder)) = schedule::pending(&db_path) {
+                        present(app.handle(), &reminder);
+                    }
+                }
             }
 
             let scheduler_app = app.handle().clone();
             let scheduler_db = db_path;
             std::thread::spawn(move || loop {
-                match schedule::scan(&scheduler_db) {
-                    Ok(Some(reminder)) => present(&scheduler_app, &reminder),
-                    Ok(None) => {}
-                    Err(err) => eprintln!("reminder: {err}"),
+                let enabled = db::open(&scheduler_db)
+                    .ok()
+                    .and_then(|conn| db::auto_remind_enabled(&conn).ok())
+                    .unwrap_or(true);
+                if enabled {
+                    match schedule::scan(&scheduler_db) {
+                        Ok(Some(reminder)) => present(&scheduler_app, &reminder),
+                        Ok(None) => {}
+                        Err(err) => eprintln!("reminder: {err}"),
+                    }
                 }
                 std::thread::sleep(Duration::from_secs(20));
             });
@@ -68,6 +78,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_projects,
             commands::create_project,
+            commands::update_project,
             commands::set_project_status,
             commands::list_subprojects,
             commands::create_subproject,
@@ -122,6 +133,7 @@ pub fn run() {
             commands::sync_register,
             commands::sync_login,
             commands::sync_logout,
+            commands::sync_set_display_name,
             commands::sync_now
         ])
         .run(tauri::generate_context!())

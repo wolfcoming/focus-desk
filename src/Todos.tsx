@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import type { Item, ItemDraft, Project, Subproject } from "./types";
 import { parseQuadrant, quadrantValue, QUADRANT_OPTIONS } from "./types";
 import { AiBusy, AiThinking, DateTimeField, Dialog, Empty, ErrorText, Field, TodoScheduleBar, when } from "./widgets";
+
+const SWIPE_DELETE_WIDTH = 88;
 
 const emptyDraft = (title = "", id: number | null = null): ItemDraft => ({
   id,
@@ -86,6 +88,10 @@ export function Todos({
   const [note, setNote] = useState("");
   const [thinking, setThinking] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [showCompose, setShowCompose] = useState(false);
+  const [swipeId, setSwipeId] = useState<number | null>(null);
+  const [swipeX, setSwipeX] = useState(0);
+  const swipeTouch = useRef<{ id: number; startX: number; startY: number; axis: "h" | "v" | null } | null>(null);
   const mobile = isAndroid();
 
   async function load() {
@@ -169,6 +175,59 @@ export function Todos({
     if (item.subprojectName) return `${item.projectName ?? "项目"} · ${item.subprojectName}`;
     if (item.projectName) return item.projectName;
     return null;
+  }
+
+  function resetCompose() {
+    setTitle("");
+    setDueAt(null);
+    setRemindAt(null);
+    setProjectId("");
+    setSubId("");
+    setShowAffil(false);
+  }
+
+  function openCompose() {
+    resetCompose();
+    setShowCompose(true);
+    setError("");
+  }
+
+  function closeCompose() {
+    setShowCompose(false);
+    setShowAffil(false);
+  }
+
+  async function submitCompose() {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    await run(async () => {
+      await api.saveItem({
+        kind: "todo",
+        title: nextTitle,
+        notes: "",
+        projectId: projectId ? Number(projectId) : null,
+        subprojectId: subId ? Number(subId) : null,
+        important: null,
+        urgent: null,
+        dueAt,
+        estimateMin: null,
+        repeatDays: null,
+        windowStart: null,
+        windowEnd: null,
+        graceMin: null,
+        interruptAfterGrace: false,
+        waitingOn: null,
+        followUpAt: remindAt,
+      });
+      resetCompose();
+      setShowCompose(false);
+      window.dispatchEvent(new Event("desk-changed"));
+    });
+  }
+
+  function closeSwipe() {
+    setSwipeId(null);
+    setSwipeX(0);
   }
 
   function openTodo(item: Item) {
@@ -548,102 +607,100 @@ export function Todos({
     );
   }
 
+  const composeForm = (
+    <form
+      className="todo-compose"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submitCompose();
+      }}
+    >
+      <div className="todo-compose-main">
+        <input
+          value={title}
+          placeholder="写一条待办"
+          onChange={(event) => setTitle(event.target.value)}
+          aria-label="待办标题"
+          autoFocus={mobile && showCompose}
+        />
+        <button className="primary" type="submit" disabled={!title.trim()}>添加</button>
+      </div>
+      <div className="todo-compose-affil">
+        <div className="todo-compose-meta">
+          <TodoScheduleBar
+            dueAt={dueAt}
+            remindAt={remindAt}
+            onDueChange={setDueAt}
+            onRemindChange={setRemindAt}
+          />
+          <button
+            type="button"
+            className="todo-affil-toggle"
+            aria-expanded={showAffil}
+            onClick={() => setShowAffil((open) => !open)}
+          >
+            挂靠：{affilSummary}
+          </button>
+        </div>
+        {showAffil && !mobile && (
+          <div className="todo-affil-fields">
+            <select
+              value={projectId}
+              onChange={(event) => {
+                setProjectId(event.target.value);
+                setSubId("");
+              }}
+              aria-label="挂靠项目"
+            >
+              <option value="">不挂项目</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+            <select
+              value={subId}
+              onChange={(event) => setSubId(event.target.value)}
+              disabled={!projectId}
+              aria-label="挂靠子任务"
+            >
+              <option value="">{projectId ? "整个项目" : "先选项目"}</option>
+              {projectSubs.map((sub) => (
+                <option key={sub.id} value={sub.id}>{sub.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+    </form>
+  );
+
   return (
-    <section>
+    <section className={mobile ? "todos-page-mobile" : undefined}>
       <h1>待办</h1>
       <p className="lead todos-lead">
-        {mobile ? "勾选即完成。没挂项目的可以再关联。" : "轻量勾选清单：勾选即完成；未挂靠的可关联到项目，或整理成任务 / 阻塞项。"}
+        {mobile ? "勾选即完成。点右下角加号添加。" : "轻量勾选清单：勾选即完成；未挂靠的可关联到项目，或整理成任务 / 阻塞项。"}
       </p>
       <ErrorText text={error} />
-      <form
-        className="todo-compose"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const nextTitle = title.trim();
-          if (!nextTitle) return;
-          void run(async () => {
-            await api.saveItem({
-              kind: "todo",
-              title: nextTitle,
-              notes: "",
-              projectId: projectId ? Number(projectId) : null,
-              subprojectId: subId ? Number(subId) : null,
-              important: null,
-              urgent: null,
-              dueAt,
-              estimateMin: null,
-              repeatDays: null,
-              windowStart: null,
-              windowEnd: null,
-              graceMin: null,
-              interruptAfterGrace: false,
-              waitingOn: null,
-              followUpAt: remindAt,
-            });
-            setTitle("");
-            setDueAt(null);
-            setRemindAt(null);
-            window.dispatchEvent(new Event("desk-changed"));
-          });
-        }}
-      >
-        <div className="todo-compose-main">
-          <input
-            value={title}
-            placeholder="写一条待办"
-            onChange={(event) => setTitle(event.target.value)}
-            aria-label="待办标题"
-          />
-          <button className="primary" type="submit" disabled={!title.trim()}>添加</button>
-        </div>
-        <div className="todo-compose-affil">
-          <div className="todo-compose-meta">
-            <TodoScheduleBar
-              dueAt={dueAt}
-              remindAt={remindAt}
-              onDueChange={setDueAt}
-              onRemindChange={setRemindAt}
-            />
-            <button
-              type="button"
-              className="todo-affil-toggle"
-              aria-expanded={showAffil}
-              onClick={() => setShowAffil((open) => !open)}
-            >
-              挂靠：{affilSummary}
-            </button>
-          </div>
-          {showAffil && !mobile && (
-            <div className="todo-affil-fields">
-              <select
-                value={projectId}
-                onChange={(event) => {
-                  setProjectId(event.target.value);
-                  setSubId("");
-                }}
-                aria-label="挂靠项目"
-              >
-                <option value="">不挂项目</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-              <select
-                value={subId}
-                onChange={(event) => setSubId(event.target.value)}
-                disabled={!projectId}
-                aria-label="挂靠子任务"
-              >
-                <option value="">{projectId ? "整个项目" : "先选项目"}</option>
-                {projectSubs.map((sub) => (
-                  <option key={sub.id} value={sub.id}>{sub.name}</option>
-                ))}
-              </select>
+      {!mobile && composeForm}
+      {mobile && showCompose && (
+        <div className="android-sheet-backdrop" role="presentation" onClick={closeCompose}>
+          <div
+            className="android-sheet android-compose-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="添加待办"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="android-sheet-handle" aria-hidden />
+            <div className="android-sheet-head">
+              <h3>添加待办</h3>
+              <button type="button" className="quiet" onClick={closeCompose}>关闭</button>
             </div>
-          )}
+            {composeForm}
+          </div>
         </div>
-      </form>
-      {mobile && showAffil && (
+      )}
+      {mobile && showCompose && showAffil && (
         <div className="android-sheet-backdrop" role="presentation" onClick={() => setShowAffil(false)}>
           <div
             className="android-sheet"
@@ -692,14 +749,15 @@ export function Todos({
           </div>
         </div>
       )}
-      {todos.length === 0 && <Empty text="还没有待办。写一条，勾选就完事。" />}
+      {todos.length === 0 && <Empty text={mobile ? "还没有待办。点右下角加号写一条。" : "还没有待办。写一条，勾选就完事。"} />}
       <div className="list">
         {todos.map((item) => {
           const done = item.status === "done";
           const affil = affiliationLabel(item);
           const loose = !done && item.projectId == null && item.subprojectId == null;
-          return (
-            <article className={done ? "row todo-row done" : "row todo-row"} key={item.id}>
+          const offset = mobile && swipeId === item.id ? swipeX : 0;
+          const rowBody = (
+            <>
               <div className="todo-check">
                 <input
                   type="checkbox"
@@ -708,7 +766,17 @@ export function Todos({
                   onChange={(event) => void run(() => api.setTodoDone(item.id, event.target.checked))}
                 />
                 <div className="todo-body">
-                  <button type="button" className="todo-title todo-title-open" onClick={() => openTodo(item)}>
+                  <button
+                    type="button"
+                    className="todo-title todo-title-open"
+                    onClick={() => {
+                      if (mobile && swipeId === item.id && swipeX < -24) {
+                        closeSwipe();
+                        return;
+                      }
+                      openTodo(item);
+                    }}
+                  >
                     {item.title}
                   </button>
                   {(item.dueAt || item.followUpAt || affil) && (
@@ -730,27 +798,109 @@ export function Todos({
                   )}
                 </div>
               </div>
-              <div className="actions">
-                {loose && (
-                  <button type="button" className="quiet todo-link-btn" disabled={busyId != null} onClick={() => { setError(""); setLinkTarget(item); }}>
-                    关联
+              {!mobile && (
+                <div className="actions">
+                  {loose && (
+                    <button type="button" className="quiet todo-link-btn" disabled={busyId != null} onClick={() => { setError(""); setLinkTarget(item); }}>
+                      关联
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="quiet todo-link-btn"
+                    onClick={() => void run(async () => {
+                      await api.dropItem(item.id);
+                      window.dispatchEvent(new Event("desk-changed"));
+                    })}
+                  >
+                    丢掉
                   </button>
-                )}
+                </div>
+              )}
+            </>
+          );
+          if (!mobile) {
+            return (
+              <article className={done ? "row todo-row done" : "row todo-row"} key={item.id}>
+                {rowBody}
+              </article>
+            );
+          }
+          return (
+            <article className={done ? "todo-swipe-row done" : "todo-swipe-row"} key={item.id}>
+              <div className="todo-swipe-actions" aria-hidden={offset > -40}>
                 <button
                   type="button"
-                  className="quiet todo-link-btn"
+                  className="todo-swipe-delete"
                   onClick={() => void run(async () => {
                     await api.dropItem(item.id);
+                    closeSwipe();
                     window.dispatchEvent(new Event("desk-changed"));
                   })}
                 >
-                  丢掉
+                  删除
                 </button>
+              </div>
+              <div
+                className="todo-swipe-front row todo-row"
+                style={{ transform: `translateX(${offset}px)` }}
+                onTouchStart={(event) => {
+                  const touch = event.changedTouches[0];
+                  if (!touch) return;
+                  swipeTouch.current = {
+                    id: item.id,
+                    startX: touch.clientX,
+                    startY: touch.clientY,
+                    axis: null,
+                  };
+                  if (swipeId != null && swipeId !== item.id) closeSwipe();
+                }}
+                onTouchMove={(event) => {
+                  const state = swipeTouch.current;
+                  const touch = event.changedTouches[0];
+                  if (!state || state.id !== item.id || !touch) return;
+                  const dx = touch.clientX - state.startX;
+                  const dy = touch.clientY - state.startY;
+                  if (state.axis == null) {
+                    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+                    state.axis = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+                  }
+                  if (state.axis !== "h") return;
+                  event.preventDefault();
+                  const next = Math.max(-SWIPE_DELETE_WIDTH, Math.min(0, dx));
+                  setSwipeId(item.id);
+                  setSwipeX(next);
+                }}
+                onTouchEnd={() => {
+                  const state = swipeTouch.current;
+                  swipeTouch.current = null;
+                  if (!state || state.id !== item.id || state.axis !== "h") return;
+                  if (swipeX <= -SWIPE_DELETE_WIDTH * 0.45) {
+                    setSwipeId(item.id);
+                    setSwipeX(-SWIPE_DELETE_WIDTH);
+                  } else {
+                    closeSwipe();
+                  }
+                }}
+                onTouchCancel={() => {
+                  swipeTouch.current = null;
+                  closeSwipe();
+                }}
+              >
+                {rowBody}
               </div>
             </article>
           );
         })}
       </div>
+
+      {mobile && !showCompose && (
+        <button type="button" className="android-fab" aria-label="添加待办" onClick={openCompose}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      )}
 
       {busyId != null && <AiBusy label="正在辅助关联这条待办" />}
 

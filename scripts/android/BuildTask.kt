@@ -27,15 +27,7 @@ abstract class BuildTask : DefaultTask() {
         val target = target ?: throw GradleException("target cannot be null")
         val release = release ?: throw GradleException("release cannot be null")
         val workingDir = File(projectDir, rootDirRel)
-        val nodeHome = resolveNodeHome()
-        val nodeExe = File(nodeHome, if (Os.isFamily(Os.FAMILY_WINDOWS)) "node.exe" else "node")
-        val npmCli = File(nodeHome, "node_modules/npm/bin/npm-cli.js")
-        if (!nodeExe.isFile) {
-            throw GradleException("Node.js executable not found at ${nodeExe.absolutePath}")
-        }
-        if (!npmCli.isFile) {
-            throw GradleException("npm-cli.js not found at ${npmCli.absolutePath}")
-        }
+        val (nodeExe, npmCli) = resolveNodeInstall()
 
         val args = mutableListOf(
             npmCli.absolutePath,
@@ -55,7 +47,10 @@ abstract class BuildTask : DefaultTask() {
         }
         args += listOf("--target", target)
 
-        val pathExtras = mutableListOf(nodeHome.absolutePath)
+        val pathExtras = mutableListOf(nodeExe.parentFile.absolutePath)
+        System.getenv("HOME")?.let { home ->
+            pathExtras += File(home, ".cargo/bin").absolutePath
+        }
         System.getenv("USERPROFILE")?.let { home ->
             pathExtras += File(home, ".cargo/bin").absolutePath
             pathExtras += File(home, "scoop/shims").absolutePath
@@ -74,18 +69,34 @@ abstract class BuildTask : DefaultTask() {
         }.assertNormalExitValue()
     }
 
-    private fun resolveNodeHome(): File {
-        val candidates = linkedSetOf<File>()
-        val programFiles = System.getenv("ProgramFiles") ?: "C:\\Program Files"
-        val localAppData = System.getenv("LOCALAPPDATA")
-        val userProfile = System.getenv("USERPROFILE")
+    private data class NodeInstall(val nodeExe: File, val npmCli: File)
 
-        candidates += File(programFiles, "nodejs")
-        if (localAppData != null) {
-            candidates += File(localAppData, "Programs/nodejs")
-        }
-        if (userProfile != null) {
-            candidates += File(userProfile, "scoop/apps/nodejs/current")
+    private fun resolveNodeInstall(): NodeInstall {
+        val candidates = linkedSetOf<File>()
+        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+            val programFiles = System.getenv("ProgramFiles") ?: "C:\\Program Files"
+            val localAppData = System.getenv("LOCALAPPDATA")
+            val userProfile = System.getenv("USERPROFILE")
+            candidates += File(programFiles, "nodejs")
+            if (localAppData != null) {
+                candidates += File(localAppData, "Programs/nodejs")
+            }
+            if (userProfile != null) {
+                candidates += File(userProfile, "scoop/apps/nodejs/current")
+            }
+        } else {
+            listOf(
+                "/usr/local/bin",
+                "/opt/homebrew/bin",
+                "/usr/bin",
+            ).forEach { candidates += File(it) }
+            System.getenv("HOME")?.let { home ->
+                candidates += File(home, ".nvm")
+                File(home, ".nvm/versions/node").takeIf { it.isDirectory }?.listFiles()
+                    ?.filter { it.isDirectory }
+                    ?.sortedByDescending { it.name }
+                    ?.forEach { candidates += File(it, "bin") }
+            }
         }
 
         val path = System.getenv("PATH") ?: ""
@@ -94,13 +105,28 @@ abstract class BuildTask : DefaultTask() {
             candidates += File(dir)
         }
 
-        return candidates.firstOrNull { home ->
-            val node = File(home, if (Os.isFamily(Os.FAMILY_WINDOWS)) "node.exe" else "node")
-            val npmCli = File(home, "node_modules/npm/bin/npm-cli.js")
-            node.isFile && npmCli.isFile
-        } ?: throw GradleException(
+        val checked = mutableListOf<String>()
+        for (home in candidates) {
+            val nodeName = if (Os.isFamily(Os.FAMILY_WINDOWS)) "node.exe" else "node"
+            val nodeExe = File(home, nodeName)
+            checked += nodeExe.absolutePath
+            if (!nodeExe.isFile) continue
+
+            val npmCandidates = listOf(
+                File(home, "node_modules/npm/bin/npm-cli.js"),
+                File(home.parentFile, "lib/node_modules/npm/bin/npm-cli.js"),
+                File(home, "../lib/node_modules/npm/bin/npm-cli.js"),
+            )
+            val npmCli = npmCandidates.firstOrNull { it.isFile }
+            if (npmCli != null) {
+                return NodeInstall(nodeExe, npmCli)
+            }
+            checked += npmCandidates.joinToString { it.absolutePath }
+        }
+
+        throw GradleException(
             "Could not find a Node.js install with npm. Checked: " +
-                candidates.joinToString { it.absolutePath },
+                checked.joinToString(),
         )
     }
 }

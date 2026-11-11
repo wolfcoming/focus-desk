@@ -8,7 +8,7 @@ const androidDir = join(root, "src-tauri", "gen", "android");
 const agpCoordinate = `com.android.tools.build:gradle:${AGP}`;
 const agpPattern = /com\.android\.tools\.build:gradle:\d+\.\d+\.\d+/g;
 const marker = "focus-desk-pin-agp";
-const buildTaskMarker = "resolveNodeHome";
+const buildTaskMarker = "resolveNodeInstall";
 const r8Flag = "android.r8.gradual.support=true";
 
 function newlineOf(text) {

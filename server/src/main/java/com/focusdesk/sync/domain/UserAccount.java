@@ -20,6 +20,9 @@ public class UserAccount {
   @Column(nullable = false, unique = true, length = 120)
   private String email;
 
+  @Column(name = "display_name", length = 80)
+  private String displayName;
+
   @Column(name = "password_hash", nullable = false, length = 100)
   private String passwordHash;
 
@@ -47,6 +50,8 @@ public class UserAccount {
   public Long getId() { return id; }
   public String getEmail() { return email; }
   public void setEmail(String email) { this.email = email; }
+  public String getDisplayName() { return displayName; }
+  public void setDisplayName(String displayName) { this.displayName = displayName; }
   public String getPasswordHash() { return passwordHash; }
   public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
   public String getRole() { return role == null || role.isBlank() ? "USER" : role; }

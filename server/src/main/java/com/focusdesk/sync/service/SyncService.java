@@ -54,27 +54,31 @@ public class SyncService {
           .findByUserIdAndCollectionAndClientId(userId, collection, clientId)
           .orElseGet(SyncRecord::new);
 
+      Instant clientTime = change.updatedAt() == null ? Instant.now() : change.updatedAt();
+      // Conflict check uses last accepted *client* time (from payload). Record.updatedAt is the
+      // server receive time so pull cursors still see newly pushed rows with old local stamps.
+      Instant previousClientTime = readClientUpdatedAt(record);
       if (record.getId() != null
-          && record.getUpdatedAt() != null
-          && change.updatedAt() != null
-          && record.getUpdatedAt().isAfter(change.updatedAt())) {
+          && previousClientTime != null
+          && previousClientTime.isAfter(clientTime)) {
         results.add(new SyncPushResult(collection, clientId, record.getUpdatedAt(), "rejected_stale"));
         continue;
       }
 
+      Instant serverTime = Instant.now();
       record.setUserId(userId);
       record.setCollection(collection);
       record.setClientId(clientId);
-      record.setUpdatedAt(change.updatedAt() == null ? Instant.now() : change.updatedAt());
+      record.setUpdatedAt(serverTime);
       if (change.deleted()) {
-        record.setDeletedAt(Instant.now());
+        record.setDeletedAt(serverTime);
         record.setPayload("{}");
       } else {
         record.setDeletedAt(null);
         record.setPayload(writePayload(change.payload()));
       }
       records.save(record);
-      results.add(new SyncPushResult(collection, clientId, record.getUpdatedAt(), "accepted"));
+      results.add(new SyncPushResult(collection, clientId, serverTime, "accepted"));
     }
     return new SyncPushResponse(results, Instant.now());
   }
@@ -121,5 +125,21 @@ public class SyncService {
     } catch (JsonProcessingException ex) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "payload 无法序列化");
     }
+  }
+
+  private Instant readClientUpdatedAt(SyncRecord record) {
+    if (record.getId() == null || record.getPayload() == null || record.getPayload().isBlank()) {
+      return null;
+    }
+    try {
+      JsonNode node = objectMapper.readTree(record.getPayload());
+      JsonNode updatedAt = node.get("updatedAt");
+      if (updatedAt != null && updatedAt.isTextual() && !updatedAt.asText().isBlank()) {
+        return Instant.parse(updatedAt.asText());
+      }
+    } catch (Exception ignored) {
+      // fall through
+    }
+    return record.getUpdatedAt();
   }
 }

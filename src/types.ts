@@ -172,12 +172,14 @@ export type SettingsView = {
   hasApiKey: boolean;
   autostart: boolean;
   supportsAutostart: boolean;
+  autoRemind: boolean;
   dataPath: string;
 };
 
 export type SyncStatusView = {
   baseUrl: string;
   email: string | null;
+  displayName: string | null;
   signedIn: boolean;
   lastSyncAt: string | null;
   cursor: string | null;
