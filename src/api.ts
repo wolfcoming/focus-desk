@@ -8,6 +8,7 @@ import type {
   Reminder,
   SettingsView,
   Subproject,
+  SubprojectAttachment,
   SyncResultView,
   SyncStatusView,
   TodayBoard,
@@ -68,6 +69,20 @@ export const api = {
     invoke<Subproject>("rename_subproject", { id, name }),
   updateSubproject: (id: number, name: string, description: string) =>
     invoke<Subproject>("update_subproject", { id, name, description }),
+  setSubprojectModules: (id: number, modules: string[]) =>
+    invoke<Subproject>("set_subproject_modules", { id, modules }),
+  setSubprojectNotes: (id: number, notes: string) =>
+    invoke<Subproject>("set_subproject_notes", { id, notes }),
+  setSubprojectRetrospect: (id: number, retrospect: string) =>
+    invoke<Subproject>("set_subproject_retrospect", { id, retrospect }),
+  listSubprojectAttachments: (subprojectId: number) =>
+    invoke<SubprojectAttachment[]>("list_subproject_attachments", { subprojectId }),
+  addSubprojectAttachment: (subprojectId: number, title: string, target: string) =>
+    invoke<SubprojectAttachment>("add_subproject_attachment", { subprojectId, title, target }),
+  deleteSubprojectAttachment: (id: number) =>
+    invoke<void>("delete_subproject_attachment", { id }),
+  openSubprojectAttachment: (id: number) =>
+    invoke<void>("open_subproject_attachment", { id }),
   reorderSubprojects: (projectId: number, orderedIds: number[]) =>
     invoke<void>("reorder_subprojects", { projectId, orderedIds }),
   listWorkLogs: (projectId: number | null) => invoke<WorkLog[]>("list_work_logs", { projectId }),

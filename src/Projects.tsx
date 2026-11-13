@@ -2,9 +2,45 @@
 import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import { ProjectBlocked } from "./ProjectBlocked";
-import type { IdeaTag, Item, Project, Subproject, WorkLog } from "./types";
+import type { IdeaTag, Item, Project, Subproject, SubprojectAttachment, SubprojectModuleId, WorkLog } from "./types";
 import { IDEA_TAG_COLORS, parseQuadrant, quadrantValue, QUADRANT_OPTIONS, subStatus } from "./types";
 import { Chevron, DateTimeField, DayChecks, Dialog, Empty, ErrorText, Field, PercentSlider, TimeField, when } from "./widgets";
+
+const SUB_MODULE_CATALOG: {
+  id: SubprojectModuleId;
+  label: string;
+  kinds: Array<"regular" | "periodic">;
+}[] = [
+  { id: "progress", label: "进度", kinds: ["regular"] },
+  { id: "key_progress", label: "关键进展", kinds: ["regular"] },
+  { id: "ideas", label: "灵感标签板", kinds: ["regular", "periodic"] },
+  { id: "todos", label: "待办", kinds: ["regular", "periodic"] },
+  { id: "notes", label: "备注", kinds: ["regular", "periodic"] },
+  { id: "attachments", label: "附件", kinds: ["regular", "periodic"] },
+  { id: "retrospect", label: "复盘", kinds: ["regular", "periodic"] },
+];
+
+function defaultSubModules(kind: string): SubprojectModuleId[] {
+  return kind === "periodic"
+    ? ["ideas", "todos"]
+    : ["progress", "key_progress", "ideas", "todos"];
+}
+
+function subModules(sub: Subproject): SubprojectModuleId[] {
+  const kind = sub.kind === "periodic" ? "periodic" : "regular";
+  if (!Array.isArray(sub.modules)) return defaultSubModules(kind);
+  const allowed = new Set(
+    SUB_MODULE_CATALOG.filter((item) => item.kinds.includes(kind)).map((item) => item.id),
+  );
+  const seen = new Set<string>();
+  const out: SubprojectModuleId[] = [];
+  for (const raw of sub.modules) {
+    if (!allowed.has(raw as SubprojectModuleId) || seen.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw as SubprojectModuleId);
+  }
+  return out;
+}
 
 function ideaBoardPercent(board: HTMLElement, clientX: number, clientY: number) {
   const rect = board.getBoundingClientRect();
@@ -269,6 +305,15 @@ export function Projects({
   const [editingProject, setEditingProject] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [projectOutcomeDraft, setProjectOutcomeDraft] = useState("");
+  const [modulePickerOpen, setModulePickerOpen] = useState(false);
+  const [previewModuleId, setPreviewModuleId] = useState<SubprojectModuleId | null>(null);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [retrospectDraft, setRetrospectDraft] = useState("");
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [editingRetrospect, setEditingRetrospect] = useState(false);
+  const [attachments, setAttachments] = useState<SubprojectAttachment[]>([]);
+  const [attachmentForm, setAttachmentForm] = useState({ title: "", target: "" });
+  const [addingAttachment, setAddingAttachment] = useState(false);
 
   async function load() {
     const [nextProjects, nextSubs, nextLogs, nextTodos] = await Promise.all([
@@ -362,6 +407,8 @@ export function Projects({
     ideaDragRef.current = null;
     setSubTodoTitle("");
     setEditingInfo(false);
+    setModulePickerOpen(false);
+    setPreviewModuleId(null);
     syncInfoDrafts(sub);
     setUpdateDraft("");
     setEditingLogId(null);
@@ -400,15 +447,26 @@ export function Projects({
     setPlacingIdea(null);
     setDraggingIdeaId(null);
     setFocusIdeaId(null);
+    setModulePickerOpen(false);
+    setPreviewModuleId(null);
     ideaDragRef.current = null;
   }, [selectedId]);
 
   useEffect(() => {
     if (openSubId == null) {
       setIdeaTags([]);
+      setAttachments([]);
+      setAttachmentForm({ title: "", target: "" });
+      setNotesDraft("");
+      setRetrospectDraft("");
+      setEditingNotes(false);
+      setEditingRetrospect(false);
+      setAddingAttachment(false);
       setPlacingIdea(null);
       setDraggingIdeaId(null);
       setFocusIdeaId(null);
+      setModulePickerOpen(false);
+      setPreviewModuleId(null);
       ideaDragRef.current = null;
       ideaSavedBodyRef.current = new Map();
       return;
@@ -423,9 +481,29 @@ export function Projects({
       .catch((reason) => {
         if (!cancelled) setError(message(reason));
       });
+    void api.listSubprojectAttachments(openSubId)
+      .then((rows) => {
+        if (!cancelled) setAttachments(rows);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(message(reason));
+      });
     return () => {
       cancelled = true;
     };
+  }, [openSubId]);
+
+  useEffect(() => {
+    const currentOpen = subs.find((sub) => sub.id === openSubId);
+    if (!currentOpen) return;
+    if (!editingNotes) setNotesDraft(currentOpen.notes ?? "");
+    if (!editingRetrospect) setRetrospectDraft(currentOpen.retrospect ?? "");
+  }, [openSubId, subs, editingNotes, editingRetrospect]);
+
+  useEffect(() => {
+    setEditingNotes(false);
+    setEditingRetrospect(false);
+    setAddingAttachment(false);
   }, [openSubId]);
 
   useEffect(() => {
@@ -560,8 +638,196 @@ export function Projects({
       .catch((reason) => setError(message(reason)));
   }
 
+  function saveSubModules(sub: Subproject, next: SubprojectModuleId[]) {
+    void run(async () => {
+      await api.setSubprojectModules(sub.id, next);
+      setModulePickerOpen(false);
+      setPreviewModuleId(null);
+    });
+  }
+
+  function closeModulePicker() {
+    setModulePickerOpen(false);
+    setPreviewModuleId(null);
+  }
+
+  function renderModulePreview(moduleId: SubprojectModuleId) {
+    if (moduleId === "progress") {
+      return (
+        <>
+          <div className="section-head"><h2>进度</h2></div>
+          <div className="stack detail-form progress-form">
+            <div className="progress-status">
+              <Field label="状态">
+                <select disabled value="doing" aria-hidden>
+                  <option>进行中</option>
+                </select>
+              </Field>
+              <PercentSlider value={36} onChange={() => {}} onCommit={() => {}} />
+            </div>
+            <Field label="工作日志，可空">
+              <textarea className="log-input" rows={1} disabled placeholder="这次做了什么，可留空" value="" />
+            </Field>
+          </div>
+        </>
+      );
+    }
+    if (moduleId === "key_progress") {
+      return (
+        <>
+          <div className="section-head">
+            <h2>关键进展</h2>
+            <span className="section-edit">追加</span>
+          </div>
+          <div className="progress-chain module-preview-chain">
+            <div className="progress-chain-item">
+              <span className="progress-step">
+                <span className="progress-step-time">昨天</span>
+                <span className="progress-step-body">对齐了范围</span>
+              </span>
+            </div>
+            <div className="progress-chain-item">
+              <span className="progress-arrow" aria-hidden>→</span>
+              <span className="progress-step">
+                <span className="progress-step-time">今天</span>
+                <span className="progress-step-body">推进到下一里程碑</span>
+              </span>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (moduleId === "ideas") {
+      return (
+        <>
+          <div className="section-head">
+            <h2>灵感标签板</h2>
+            <span className="section-count">3</span>
+          </div>
+          <div className="idea-board-palette" aria-hidden>
+            {IDEA_TAG_COLORS.slice(0, 4).map((option) => (
+              <span key={option.value} className={`idea-swatch idea-color-${option.value}`} />
+            ))}
+          </div>
+          <div className="idea-board module-preview-board" aria-hidden>
+            <div className="idea-card idea-color-soft" style={{ left: "18%", top: "28%" }}>
+              <span className="idea-card-body">一个切入点</span>
+            </div>
+            <div className="idea-card idea-color-amber" style={{ left: "58%", top: "42%" }}>
+              <span className="idea-card-body">可再挖深</span>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (moduleId === "todos") {
+      return (
+        <>
+          <div className="section-head">
+            <h2>待办</h2>
+            <span className="section-count">2</span>
+          </div>
+          <div className="todo-compose">
+            <div className="todo-compose-main">
+              <input disabled placeholder="给这条子任务加一条待办" value="" />
+              <button className="primary" type="button" disabled>添加</button>
+            </div>
+          </div>
+          <div className="list module-preview-list">
+            <article className="row">
+              <div className="row-open"><h3>整理参考材料</h3></div>
+            </article>
+            <article className="row">
+              <div className="row-open"><h3>回一封确认邮件</h3></div>
+            </article>
+          </div>
+        </>
+      );
+    }
+    if (moduleId === "notes") {
+      return (
+        <>
+          <div className="section-head">
+            <h2>备注</h2>
+            <span className="section-edit">修改</span>
+          </div>
+          <div className="module-readonly">方案要点、临时链接、会议纪要…</div>
+        </>
+      );
+    }
+    if (moduleId === "attachments") {
+      return (
+        <>
+          <div className="section-head">
+            <h2>附件</h2>
+            <span className="section-count">2</span>
+            <span className="section-edit">添加</span>
+          </div>
+          <ul className="attachment-list">
+            <li className="attachment-row">
+              <div className="attachment-meta">
+                <strong>需求文档</strong>
+                <span>https://example.com/spec</span>
+              </div>
+            </li>
+            <li className="attachment-row">
+              <div className="attachment-meta">
+                <strong>本地草稿</strong>
+                <span>~/Documents/draft.md</span>
+              </div>
+            </li>
+          </ul>
+        </>
+      );
+    }
+    return (
+      <>
+        <div className="section-head">
+          <h2>复盘</h2>
+          <span className="section-edit">填写</span>
+        </div>
+        <div className="module-readonly is-empty">暂无内容</div>
+      </>
+    );
+  }
+
+  function removeSubModule(sub: Subproject, moduleId: SubprojectModuleId) {
+    saveSubModules(sub, subModules(sub).filter((id) => id !== moduleId));
+  }
+
+  function addSubModule(sub: Subproject, moduleId: SubprojectModuleId) {
+    const currentModules = subModules(sub);
+    if (currentModules.includes(moduleId)) {
+      closeModulePicker();
+      return;
+    }
+    saveSubModules(sub, [...currentModules, moduleId]);
+  }
+
   const mine = current ? subs.filter((sub) => sub.projectId === current.id) : [];
   const opened = mine.find((sub) => sub.id === openSubId) ?? null;
+  const openedModules = opened ? subModules(opened) : [];
+  const availableModules = opened
+    ? SUB_MODULE_CATALOG.filter((item) => {
+      const kind = opened.kind === "periodic" ? "periodic" : "regular";
+      return item.kinds.includes(kind) && !openedModules.includes(item.id);
+    })
+    : [];
+
+  function moduleHideButton(moduleId: SubprojectModuleId) {
+    if (!opened) return null;
+    return (
+      <button
+        type="button"
+        className="quiet module-hide"
+        disabled={busy}
+        onClick={() => removeSubModule(opened, moduleId)}
+      >
+        隐藏模块
+      </button>
+    );
+  }
+
   const projectTodos = current
     ? todos.filter((item) => item.projectId === current.id && item.subprojectId == null)
     : [];
@@ -813,7 +1079,7 @@ export function Projects({
         </div>
       )}
       {current && opened && (
-        <div className="project-page">
+        <div className="project-page sub-detail">
           {chromeBack && (
             <button
               type="button"
@@ -830,7 +1096,15 @@ export function Projects({
             <div className="project-header-top">
               <div className="project-heading">
                 <h1>{opened.name}</h1>
-                <span className="status-chip">
+                <span
+                  className={`status-chip status-${
+                    opened.status === "paused"
+                      ? "paused"
+                      : opened.kind === "periodic"
+                        ? "periodic"
+                        : progressOf(opened)
+                  }`}
+                >
                   {opened.status === "paused"
                     ? "暂停"
                     : opened.kind === "periodic"
@@ -1003,343 +1277,670 @@ export function Projects({
             <ErrorText text={error} />
           </header>
 
-          {opened.kind !== "periodic" && (
-            <section className="project-section">
-              <div className="section-head"><h2>进度</h2></div>
-              <div className="stack detail-form progress-form">
-                <div className="progress-status">
-                  <Field label="状态">
-                    <select
-                      value={progressForm.progress}
-                      disabled={busy}
-                      onChange={(event) => {
-                        const progress = event.target.value;
-                        let nextPercent = progressForm.progressPercent;
-                        if (progress === "doing" && nextPercent.trim() === "") nextPercent = "0";
-                        setProgressForm((prev) => ({
-                          ...prev,
-                          progress,
-                          progressPercent: progress === "doing" && prev.progressPercent.trim() === ""
-                            ? "0"
-                            : prev.progressPercent,
-                        }));
-                        const percent = progress === "doing"
-                          ? Math.max(0, Math.min(100, Number(nextPercent) || 0))
-                          : null;
-                        void run(async () => {
-                          await api.setSubprojectProgress(opened.id, progress, percent, null);
-                        });
-                      }}
-                    >
-                      <option value="not_started">未开始</option>
-                      <option value="doing">进行中</option>
-                      <option value="done">已完成</option>
-                    </select>
-                  </Field>
-                  {progressForm.progress === "doing" && (
-                    <PercentSlider
-                      value={Number(progressForm.progressPercent) || 0}
-                      onChange={(value) => setProgressForm((prev) => ({ ...prev, progressPercent: String(value) }))}
-                      onCommit={(value) => {
-                        const percent = Math.max(0, Math.min(100, value));
-                        setProgressForm((prev) => ({ ...prev, progressPercent: String(percent) }));
-                        void run(async () => {
-                          await api.setSubprojectProgress(opened.id, "doing", percent, null);
-                        });
-                      }}
-                    />
-                  )}
-                </div>
-                <Field label="工作日志，可空">
-                  <div className="log-with-save">
-                    <textarea
-                      className="log-input"
-                      rows={1}
-                      placeholder="这次做了什么，可留空"
-                      value={progressForm.log}
-                      onChange={(event) => setProgressForm((prev) => ({ ...prev, log: event.target.value }))}
-                    />
-                    {progressForm.log.trim() !== "" && (
-                      <button
-                        type="button"
-                        className="primary"
-                        disabled={busy}
-                        onClick={() => {
-                          const body = progressForm.log.trim();
-                          if (!body) return;
-                          const progress = progressForm.progress;
-                          const percent = progress === "doing"
-                            ? Math.max(0, Math.min(100, Number(progressForm.progressPercent) || 0))
-                            : null;
-                          void run(async () => {
-                            await api.setSubprojectProgress(opened.id, progress, percent, body);
-                            setProgressForm((prev) => ({ ...prev, log: "" }));
-                          });
-                        }}
-                      >
-                        {busy ? "保存中…" : "保存"}
-                      </button>
-                    )}
+          {openedModules.map((moduleId) => {
+            if (moduleId === "progress") {
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>进度</h2>
+                    {moduleHideButton("progress")}
                   </div>
-                </Field>
-              </div>
-            </section>
-          )}
-
-          {opened.kind !== "periodic" && (
-            <section className="project-section">
-              <div className="section-head">
-                <h2>关键进展</h2>
-                <button
-                  type="button"
-                  className="quiet section-edit"
-                  onClick={() => {
-                    setUpdateDraft("");
-                    setKeyProgressOpen(true);
-                  }}
-                >
-                  追加
-                </button>
-              </div>
-              <div className="detail-form progress-section">
-              {(() => {
-                const chain = keyProgressLogs.slice().reverse();
-                if (chain.length === 0) {
-                  return <Empty text="还没有关键进展。点右上角「追加」写一条。" />;
-                }
-                return (
-                  <div className="progress-chain">
-                    {chain.map((log, index) => (
-                      <div className="progress-chain-item" key={log.id}>
-                        {index > 0 && <span className="progress-arrow" aria-hidden>→</span>}
-                        {editingLogId === log.id ? (
-                          <form
-                            className="progress-step progress-step-edit"
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              const body = editingLogBody.trim();
+                  <div className="stack detail-form progress-form">
+                    <div className="progress-status">
+                      <Field label="状态">
+                        <select
+                          value={progressForm.progress}
+                          disabled={busy}
+                          onChange={(event) => {
+                            const progress = event.target.value;
+                            let nextPercent = progressForm.progressPercent;
+                            if (progress === "doing" && nextPercent.trim() === "") nextPercent = "0";
+                            setProgressForm((prev) => ({
+                              ...prev,
+                              progress,
+                              progressPercent: progress === "doing" && prev.progressPercent.trim() === ""
+                                ? "0"
+                                : prev.progressPercent,
+                            }));
+                            const percent = progress === "doing"
+                              ? Math.max(0, Math.min(100, Number(nextPercent) || 0))
+                              : null;
+                            void run(async () => {
+                              await api.setSubprojectProgress(opened.id, progress, percent, null);
+                            });
+                          }}
+                        >
+                          <option value="not_started">未开始</option>
+                          <option value="doing">进行中</option>
+                          <option value="done">已完成</option>
+                        </select>
+                      </Field>
+                      {progressForm.progress === "doing" && (
+                        <PercentSlider
+                          value={Number(progressForm.progressPercent) || 0}
+                          onChange={(value) => setProgressForm((prev) => ({ ...prev, progressPercent: String(value) }))}
+                          onCommit={(value) => {
+                            const percent = Math.max(0, Math.min(100, value));
+                            setProgressForm((prev) => ({ ...prev, progressPercent: String(percent) }));
+                            void run(async () => {
+                              await api.setSubprojectProgress(opened.id, "doing", percent, null);
+                            });
+                          }}
+                        />
+                      )}
+                    </div>
+                    <Field label="工作日志，可空">
+                      <div className="log-with-save">
+                        <textarea
+                          className="log-input"
+                          rows={1}
+                          placeholder="这次做了什么，可留空"
+                          value={progressForm.log}
+                          onChange={(event) => setProgressForm((prev) => ({ ...prev, log: event.target.value }))}
+                        />
+                        {progressForm.log.trim() !== "" && (
+                          <button
+                            type="button"
+                            className="primary"
+                            disabled={busy}
+                            onClick={() => {
+                              const body = progressForm.log.trim();
                               if (!body) return;
+                              const progress = progressForm.progress;
+                              const percent = progress === "doing"
+                                ? Math.max(0, Math.min(100, Number(progressForm.progressPercent) || 0))
+                                : null;
                               void run(async () => {
-                                await api.updateWorkLog(log.id, body);
-                                setEditingLogId(null);
-                                setEditingLogBody("");
+                                await api.setSubprojectProgress(opened.id, progress, percent, body);
+                                setProgressForm((prev) => ({ ...prev, log: "" }));
                               });
                             }}
                           >
-                            <textarea
-                              className="log-input"
-                              rows={1}
-                              value={editingLogBody}
-                              onChange={(event) => setEditingLogBody(event.target.value)}
-                              aria-label="编辑关键进展"
-                            />
-                            <div className="actions log-actions">
-                              <button className="primary" type="submit" disabled={busy || !editingLogBody.trim()}>保存</button>
-                              <button type="button" className="quiet" onClick={() => { setEditingLogId(null); setEditingLogBody(""); }}>取消</button>
-                              <button
-                                type="button"
-                                className="quiet tree-delete"
-                                onClick={() => {
+                            {busy ? "保存中…" : "保存"}
+                          </button>
+                        )}
+                      </div>
+                    </Field>
+                  </div>
+                </section>
+              );
+            }
+            if (moduleId === "key_progress") {
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>关键进展</h2>
+                    {moduleHideButton("key_progress")}
+                    <div className="section-tools">
+                      <button
+                        type="button"
+                        className="quiet section-edit"
+                        onClick={() => {
+                          setUpdateDraft("");
+                          setKeyProgressOpen(true);
+                        }}
+                      >
+                        追加
+                      </button>
+                    </div>
+                  </div>
+                  <div className="detail-form progress-section">
+                  {(() => {
+                    const chain = keyProgressLogs.slice().reverse();
+                    if (chain.length === 0) {
+                      return <Empty text="还没有关键进展。点右上角「追加」写一条。" />;
+                    }
+                    return (
+                      <div className="progress-chain">
+                        {chain.map((log, index) => (
+                          <div className="progress-chain-item" key={log.id}>
+                            {index > 0 && <span className="progress-arrow" aria-hidden>→</span>}
+                            {editingLogId === log.id ? (
+                              <form
+                                className="progress-step progress-step-edit"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const body = editingLogBody.trim();
+                                  if (!body) return;
                                   void run(async () => {
-                                    await api.deleteWorkLog(log.id);
+                                    await api.updateWorkLog(log.id, body);
                                     setEditingLogId(null);
                                     setEditingLogBody("");
                                   });
                                 }}
                               >
-                                删除
+                                <textarea
+                                  className="log-input"
+                                  rows={1}
+                                  value={editingLogBody}
+                                  onChange={(event) => setEditingLogBody(event.target.value)}
+                                  aria-label="编辑关键进展"
+                                />
+                                <div className="actions log-actions">
+                                  <button className="primary" type="submit" disabled={busy || !editingLogBody.trim()}>保存</button>
+                                  <button type="button" className="quiet" onClick={() => { setEditingLogId(null); setEditingLogBody(""); }}>取消</button>
+                                  <button
+                                    type="button"
+                                    className="quiet tree-delete"
+                                    onClick={() => {
+                                      void run(async () => {
+                                        await api.deleteWorkLog(log.id);
+                                        setEditingLogId(null);
+                                        setEditingLogBody("");
+                                      });
+                                    }}
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              </form>
+                            ) : (
+                              <button
+                                type="button"
+                                className="progress-step"
+                                title={logStamp(log)}
+                                onClick={() => {
+                                  setEditingLogId(log.id);
+                                  setEditingLogBody(log.body);
+                                }}
+                              >
+                                <span className="progress-step-time">{when(log.createdAt)}</span>
+                                <span className="progress-step-body">{log.body.trim() || "（无文字）"}</span>
                               </button>
-                            </div>
-                          </form>
-                        ) : (
-                          <button
-                            type="button"
-                            className="progress-step"
-                            title={logStamp(log)}
-                            onClick={() => {
-                              setEditingLogId(log.id);
-                              setEditingLogBody(log.body);
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  </div>
+                </section>
+              );
+            }
+            if (moduleId === "ideas") {
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>灵感标签板</h2>
+                    {moduleHideButton("ideas")}
+                    <span className="section-count">{ideaTags.length}</span>
+                  </div>
+                  <div className="idea-board-palette" role="group" aria-label="添加灵感标签">
+                    {IDEA_TAG_COLORS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`idea-swatch idea-color-${option.value}${placingIdea?.color === option.value ? " selected" : ""}`}
+                        disabled={busy}
+                        title={`添加${option.label}便签`}
+                        aria-label={`添加${option.label}便签`}
+                        aria-pressed={placingIdea?.color === option.value}
+                        onClick={() => startPlacingIdea(option.value)}
+                      />
+                    ))}
+                    {placingIdea && (
+                      <span className="idea-board-hint-inline">点板上放下，Esc 取消</span>
+                    )}
+                  </div>
+                  <div
+                    ref={ideaBoardRef}
+                    className={`idea-board${placingIdea ? " placing" : ""}${draggingIdeaId != null ? " dragging" : ""}`}
+                    onPointerMove={(event) => {
+                      if (!placingIdea) return;
+                      const board = ideaBoardRef.current;
+                      if (!board) return;
+                      setPlacingPos(ideaBoardPercent(board, event.clientX, event.clientY));
+                    }}
+                    onPointerDown={(event) => {
+                      if (!placingIdea || event.button !== 0) return;
+                      if ((event.target as HTMLElement).closest(".idea-card")) return;
+                      event.preventDefault();
+                      void placeIdeaAt(event.clientX, event.clientY);
+                    }}
+                  >
+                    {ideaTags.length === 0 && !placingIdea && (
+                      <div className="idea-board-empty">点上方色块贴一张灵感</div>
+                    )}
+                    {ideaTags.map((tag) => (
+                      <div
+                        key={tag.id}
+                        className={`idea-card idea-color-${tag.color}${draggingIdeaId === tag.id ? " dragging" : ""}${focusIdeaId === tag.id ? " editing" : ""}`}
+                        style={{
+                          left: `${tag.posX}%`,
+                          top: `${tag.posY}%`,
+                          zIndex: draggingIdeaId === tag.id || focusIdeaId === tag.id ? 999 : Math.max(1, tag.zIndex),
+                        }}
+                        onPointerDown={(event) => beginIdeaDrag(tag, event)}
+                        onDoubleClick={(event) => {
+                          if ((event.target as HTMLElement).closest("button")) return;
+                          setFocusIdeaId(tag.id);
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="idea-card-delete"
+                          aria-label="删除便签"
+                          onClick={() => {
+                            void run(async () => {
+                              await api.deleteIdeaTag(tag.id);
+                              ideaSavedBodyRef.current.delete(tag.id);
+                              setIdeaTags((tags) => tags.filter((item) => item.id !== tag.id));
+                              if (focusIdeaId === tag.id) setFocusIdeaId(null);
+                            });
+                          }}
+                        >
+                          <span aria-hidden>×</span>
+                        </button>
+                        {focusIdeaId === tag.id ? (
+                          <textarea
+                            className="idea-card-body"
+                            rows={2}
+                            placeholder="写点灵感…"
+                            value={tag.body}
+                            aria-label="灵感内容"
+                            ref={(node) => {
+                              if (node) ideaInputRefs.current.set(tag.id, node);
+                              else ideaInputRefs.current.delete(tag.id);
                             }}
-                          >
-                            <span className="progress-step-time">{when(log.createdAt)}</span>
-                            <span className="progress-step-body">{log.body.trim() || "（无文字）"}</span>
-                          </button>
+                            onChange={(event) => {
+                              const body = event.target.value;
+                              setIdeaTags((tags) => tags.map((item) => (
+                                item.id === tag.id ? { ...item, body } : item
+                              )));
+                            }}
+                            onBlur={(event) => {
+                              const body = event.target.value;
+                              setFocusIdeaId(null);
+                              saveIdeaBody(tag.id, tag.color, body);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                event.currentTarget.blur();
+                              }
+                            }}
+                          />
+                        ) : (
+                          <div className={`idea-card-body${tag.body.trim() ? "" : " empty"}`}>
+                            {tag.body.trim() || "写点灵感…"}
+                          </div>
                         )}
                       </div>
                     ))}
+                    {placingIdea && (
+                      <div
+                        className={`idea-card idea-color-${placingIdea.color} ghost`}
+                        style={{ left: `${placingPos.x}%`, top: `${placingPos.y}%`, zIndex: 1000 }}
+                      >
+                        <span className="idea-card-body">写点灵感…</span>
+                      </div>
+                    )}
                   </div>
-                );
-              })()}
-              </div>
-            </section>
-          )}
-
-          <section className="project-section">
-            <div className="section-head">
-              <h2>灵感标签板</h2>
-              <span className="section-count">{ideaTags.length}</span>
-            </div>
-            <div className="idea-board-palette" role="group" aria-label="添加灵感标签">
-              {IDEA_TAG_COLORS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`idea-swatch idea-color-${option.value}${placingIdea?.color === option.value ? " selected" : ""}`}
-                  disabled={busy}
-                  title={`添加${option.label}便签`}
-                  aria-label={`添加${option.label}便签`}
-                  aria-pressed={placingIdea?.color === option.value}
-                  onClick={() => startPlacingIdea(option.value)}
-                />
-              ))}
-              {placingIdea && (
-                <span className="idea-board-hint-inline">点板上放下，Esc 取消</span>
-              )}
-            </div>
-            <div
-              ref={ideaBoardRef}
-              className={`idea-board${placingIdea ? " placing" : ""}${draggingIdeaId != null ? " dragging" : ""}`}
-              onPointerMove={(event) => {
-                if (!placingIdea) return;
-                const board = ideaBoardRef.current;
-                if (!board) return;
-                setPlacingPos(ideaBoardPercent(board, event.clientX, event.clientY));
-              }}
-              onPointerDown={(event) => {
-                if (!placingIdea || event.button !== 0) return;
-                if ((event.target as HTMLElement).closest(".idea-card")) return;
-                event.preventDefault();
-                void placeIdeaAt(event.clientX, event.clientY);
-              }}
-            >
-              {ideaTags.length === 0 && !placingIdea && (
-                <div className="idea-board-empty">点上方色块贴一张灵感</div>
-              )}
-              {ideaTags.map((tag) => (
-                <div
-                  key={tag.id}
-                  className={`idea-card idea-color-${tag.color}${draggingIdeaId === tag.id ? " dragging" : ""}${focusIdeaId === tag.id ? " editing" : ""}`}
-                  style={{
-                    left: `${tag.posX}%`,
-                    top: `${tag.posY}%`,
-                    zIndex: draggingIdeaId === tag.id || focusIdeaId === tag.id ? 999 : Math.max(1, tag.zIndex),
-                  }}
-                  onPointerDown={(event) => beginIdeaDrag(tag, event)}
-                  onDoubleClick={(event) => {
-                    if ((event.target as HTMLElement).closest("button")) return;
-                    setFocusIdeaId(tag.id);
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="idea-card-delete"
-                    aria-label="删除便签"
-                    onClick={() => {
+                </section>
+              );
+            }
+            if (moduleId === "todos") {
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>待办</h2>
+                    {moduleHideButton("todos")}
+                    <span className="section-count">{subTodos.length}</span>
+                  </div>
+                  <form
+                    className="todo-compose"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const nextTitle = subTodoTitle.trim();
+                      if (!nextTitle || !opened || !current) return;
                       void run(async () => {
-                        await api.deleteIdeaTag(tag.id);
-                        ideaSavedBodyRef.current.delete(tag.id);
-                        setIdeaTags((tags) => tags.filter((item) => item.id !== tag.id));
-                        if (focusIdeaId === tag.id) setFocusIdeaId(null);
+                        await api.saveItem({
+                          kind: "todo",
+                          title: nextTitle,
+                          notes: "",
+                          projectId: current.id,
+                          subprojectId: opened.id,
+                          important: null,
+                          urgent: null,
+                          dueAt: null,
+                          estimateMin: null,
+                          repeatDays: null,
+                          windowStart: null,
+                          windowEnd: null,
+                          graceMin: null,
+                          interruptAfterGrace: false,
+                          waitingOn: null,
+                          followUpAt: null,
+                        });
+                        setSubTodoTitle("");
                       });
                     }}
                   >
-                    <span aria-hidden>×</span>
-                  </button>
-                  {focusIdeaId === tag.id ? (
-                    <textarea
-                      className="idea-card-body"
-                      rows={2}
-                      placeholder="写点灵感…"
-                      value={tag.body}
-                      aria-label="灵感内容"
-                      ref={(node) => {
-                        if (node) ideaInputRefs.current.set(tag.id, node);
-                        else ideaInputRefs.current.delete(tag.id);
-                      }}
-                      onChange={(event) => {
-                        const body = event.target.value;
-                        setIdeaTags((tags) => tags.map((item) => (
-                          item.id === tag.id ? { ...item, body } : item
-                        )));
-                      }}
-                      onBlur={(event) => {
-                        const body = event.target.value;
-                        setFocusIdeaId(null);
-                        saveIdeaBody(tag.id, tag.color, body);
-                      }}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") {
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
+                    <div className="todo-compose-main">
+                      <input
+                        value={subTodoTitle}
+                        placeholder="给这条子任务加一条待办"
+                        onChange={(event) => setSubTodoTitle(event.target.value)}
+                        aria-label="子任务待办标题"
+                      />
+                      <button className="primary" type="submit" disabled={busy || !subTodoTitle.trim()}>
+                        添加
+                      </button>
+                    </div>
+                  </form>
+                  {renderTodoList(subTodos, "还没有挂在这条子任务上的待办。")}
+                </section>
+              );
+            }
+            if (moduleId === "notes") {
+              const notesText = (opened.notes ?? "").trim();
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>备注</h2>
+                    {moduleHideButton("notes")}
+                    {!editingNotes && (
+                      <div className="section-tools">
+                        <button
+                          type="button"
+                          className="quiet section-edit"
+                          disabled={busy}
+                          onClick={() => {
+                            setNotesDraft(opened.notes ?? "");
+                            setEditingNotes(true);
+                          }}
+                        >
+                          {notesText ? "修改" : "填写"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {editingNotes ? (
+                    <div className="stack detail-form">
+                      <textarea
+                        className="log-input module-textarea"
+                        rows={5}
+                        placeholder="方案、链接、临时想法…写在这里"
+                        value={notesDraft}
+                        onChange={(event) => setNotesDraft(event.target.value)}
+                        aria-label="备注"
+                        autoFocus
+                      />
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="quiet"
+                          disabled={busy}
+                          onClick={() => {
+                            setNotesDraft(opened.notes ?? "");
+                            setEditingNotes(false);
+                          }}
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={busy || notesDraft === (opened.notes ?? "")}
+                          onClick={() => {
+                            void run(async () => {
+                              await api.setSubprojectNotes(opened.id, notesDraft);
+                              setEditingNotes(false);
+                            });
+                          }}
+                        >
+                          {busy ? "保存中…" : "保存"}
+                        </button>
+                      </div>
+                    </div>
                   ) : (
-                    <div className={`idea-card-body${tag.body.trim() ? "" : " empty"}`}>
-                      {tag.body.trim() || "写点灵感…"}
+                    <div className={`module-readonly${notesText ? "" : " is-empty"}`}>
+                      {notesText || "暂无内容"}
                     </div>
                   )}
-                </div>
-              ))}
-              {placingIdea && (
-                <div
-                  className={`idea-card idea-color-${placingIdea.color} ghost`}
-                  style={{ left: `${placingPos.x}%`, top: `${placingPos.y}%`, zIndex: 1000 }}
-                >
-                  <span className="idea-card-body">写点灵感…</span>
-                </div>
-              )}
-            </div>
-          </section>
+                </section>
+              );
+            }
+            if (moduleId === "attachments") {
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>附件</h2>
+                    {moduleHideButton("attachments")}
+                    <span className="section-count">{attachments.length}</span>
+                    {!addingAttachment && (
+                      <div className="section-tools">
+                        <button
+                          type="button"
+                          className="quiet section-edit"
+                          disabled={busy}
+                          onClick={() => setAddingAttachment(true)}
+                        >
+                          添加
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {addingAttachment && (
+                    <form
+                      className="attachment-compose"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const title = attachmentForm.title.trim();
+                        const target = attachmentForm.target.trim();
+                        if (!target) return;
+                        void run(async () => {
+                          const created = await api.addSubprojectAttachment(opened.id, title, target);
+                          setAttachments((rows) => [...rows, created]);
+                          setAttachmentForm({ title: "", target: "" });
+                          setAddingAttachment(false);
+                        });
+                      }}
+                    >
+                      <input
+                        value={attachmentForm.title}
+                        placeholder="名称，可空"
+                        onChange={(event) => setAttachmentForm((prev) => ({ ...prev, title: event.target.value }))}
+                        aria-label="附件名称"
+                      />
+                      <input
+                        value={attachmentForm.target}
+                        placeholder="网址或本地路径"
+                        onChange={(event) => setAttachmentForm((prev) => ({ ...prev, target: event.target.value }))}
+                        aria-label="附件地址"
+                        required
+                        autoFocus
+                      />
+                      <button className="primary" type="submit" disabled={busy || !attachmentForm.target.trim()}>
+                        添加
+                      </button>
+                      <button
+                        type="button"
+                        className="quiet"
+                        disabled={busy}
+                        onClick={() => {
+                          setAttachmentForm({ title: "", target: "" });
+                          setAddingAttachment(false);
+                        }}
+                      >
+                        取消
+                      </button>
+                    </form>
+                  )}
+                  {attachments.length === 0 && !addingAttachment ? (
+                    <div className="module-readonly is-empty">暂无附件</div>
+                  ) : attachments.length > 0 ? (
+                    <ul className="attachment-list">
+                      {attachments.map((item) => (
+                        <li key={item.id} className="attachment-row">
+                          <div className="attachment-meta">
+                            <strong>{item.title}</strong>
+                            <span title={item.target}>{item.target}</span>
+                          </div>
+                          <div className="actions row-tools">
+                            <button
+                              type="button"
+                              className="quiet"
+                              disabled={busy}
+                              onClick={() => {
+                                void api.openSubprojectAttachment(item.id)
+                                  .then(() => setError(""))
+                                  .catch((reason) => setError(message(reason)));
+                              }}
+                            >
+                              打开
+                            </button>
+                            <button
+                              type="button"
+                              className="quiet tree-delete"
+                              disabled={busy}
+                              onClick={() => {
+                                void run(async () => {
+                                  await api.deleteSubprojectAttachment(item.id);
+                                  setAttachments((rows) => rows.filter((row) => row.id !== item.id));
+                                });
+                              }}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              );
+            }
+            if (moduleId === "retrospect") {
+              const retrospectText = (opened.retrospect ?? "").trim();
+              return (
+                <section className="project-section module-section" key={moduleId}>
+                  <div className="section-head">
+                    <h2>复盘</h2>
+                    {moduleHideButton("retrospect")}
+                    {!editingRetrospect && (
+                      <div className="section-tools">
+                        <button
+                          type="button"
+                          className="quiet section-edit"
+                          disabled={busy}
+                          onClick={() => {
+                            setRetrospectDraft(opened.retrospect ?? "");
+                            setEditingRetrospect(true);
+                          }}
+                        >
+                          {retrospectText ? "修改" : "填写"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {editingRetrospect ? (
+                    <div className="stack detail-form">
+                      <textarea
+                        className="log-input module-textarea"
+                        rows={5}
+                        placeholder="做得怎样、下次怎么改…"
+                        value={retrospectDraft}
+                        onChange={(event) => setRetrospectDraft(event.target.value)}
+                        aria-label="复盘"
+                        autoFocus
+                      />
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="quiet"
+                          disabled={busy}
+                          onClick={() => {
+                            setRetrospectDraft(opened.retrospect ?? "");
+                            setEditingRetrospect(false);
+                          }}
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={busy || retrospectDraft === (opened.retrospect ?? "")}
+                          onClick={() => {
+                            void run(async () => {
+                              await api.setSubprojectRetrospect(opened.id, retrospectDraft);
+                              setEditingRetrospect(false);
+                            });
+                          }}
+                        >
+                          {busy ? "保存中…" : "保存"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`module-readonly${retrospectText ? "" : " is-empty"}`}>
+                      {retrospectText || "暂无内容"}
+                    </div>
+                  )}
+                </section>
+              );
+            }
+            return null;
+          })}
 
-          <section className="project-section">
-            <div className="section-head">
-              <h2>待办</h2>
-              <span className="section-count">{subTodos.length}</span>
-            </div>
-            <form
-              className="todo-compose"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const nextTitle = subTodoTitle.trim();
-                if (!nextTitle || !opened || !current) return;
-                void run(async () => {
-                  await api.saveItem({
-                    kind: "todo",
-                    title: nextTitle,
-                    notes: "",
-                    projectId: current.id,
-                    subprojectId: opened.id,
-                    important: null,
-                    urgent: null,
-                    dueAt: null,
-                    estimateMin: null,
-                    repeatDays: null,
-                    windowStart: null,
-                    windowEnd: null,
-                    graceMin: null,
-                    interruptAfterGrace: false,
-                    waitingOn: null,
-                    followUpAt: null,
-                  });
-                  setSubTodoTitle("");
-                });
+          {availableModules.length > 0 && (
+            <div
+              className="module-add-bar"
+              onMouseLeave={() => {
+                if (modulePickerOpen) setPreviewModuleId(null);
               }}
             >
-              <div className="todo-compose-main">
-                <input
-                  value={subTodoTitle}
-                  placeholder="给这条子任务加一条待办"
-                  onChange={(event) => setSubTodoTitle(event.target.value)}
-                  aria-label="子任务待办标题"
-                />
-                <button className="primary" type="submit" disabled={busy || !subTodoTitle.trim()}>
-                  添加
+              {modulePickerOpen ? (
+                <>
+                  <div className="module-picker" role="menu" aria-label="添加模块">
+                    {availableModules.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`quiet${previewModuleId === item.id ? " selected" : ""}`}
+                        role="menuitem"
+                        disabled={busy}
+                        onMouseEnter={() => setPreviewModuleId(item.id)}
+                        onFocus={() => setPreviewModuleId(item.id)}
+                        onClick={() => addSubModule(opened, item.id)}
+                      >
+                        添加{item.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="quiet"
+                      onMouseEnter={() => setPreviewModuleId(null)}
+                      onFocus={() => setPreviewModuleId(null)}
+                      onClick={closeModulePicker}
+                    >
+                      取消
+                    </button>
+                  </div>
+                  {previewModuleId && (
+                    <section className="project-section module-preview" aria-hidden>
+                      <div className="module-preview-label">
+                        预览 · {SUB_MODULE_CATALOG.find((item) => item.id === previewModuleId)?.label}
+                      </div>
+                      {renderModulePreview(previewModuleId)}
+                    </section>
+                  )}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="quiet"
+                  disabled={busy}
+                  onClick={() => {
+                    setPreviewModuleId(null);
+                    setModulePickerOpen(true);
+                  }}
+                >
+                  添加模块
                 </button>
-              </div>
-            </form>
-            {renderTodoList(subTodos, "还没有挂在这条子任务上的待办。")}
-          </section>
+              )}
+            </div>
+          )}
 
           {logsOpen && opened.kind !== "periodic" && (
             <Dialog title="工作记录" onClose={() => setLogsOpen(false)}>

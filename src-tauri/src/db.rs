@@ -40,6 +40,20 @@ pub struct Subproject {
     pub progress_percent: Option<i64>,
     pub quadrant: Option<String>,
     pub sort_order: i64,
+    /// Visible detail modules for this subtask, e.g. progress / key_progress / ideas / todos.
+    pub modules: Vec<String>,
+    pub notes: String,
+    pub retrospect: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubprojectAttachment {
+    pub id: i64,
+    pub subproject_id: i64,
+    pub title: String,
+    pub target: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +107,7 @@ pub struct Item {
     pub follow_up_at: Option<String>,
     pub started_at: Option<String>,
     pub snooze_until: Option<String>,
+    pub created_at: String,
     pub quadrant: Option<String>,
 }
 
@@ -324,6 +339,19 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     ensure_column(conn, "subprojects", "progress", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "subprojects", "progress_percent", "INTEGER")?;
     ensure_column(conn, "subprojects", "description", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(conn, "subprojects", "modules", "TEXT")?;
+    ensure_column(conn, "subprojects", "notes", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(conn, "subprojects", "retrospect", "TEXT NOT NULL DEFAULT ''")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS subproject_attachments (
+           id INTEGER PRIMARY KEY,
+           subproject_id INTEGER NOT NULL REFERENCES subprojects(id),
+           title TEXT NOT NULL,
+           target TEXT NOT NULL,
+           created_at TEXT NOT NULL
+         );",
+    )
+    .map_err(|err| err.to_string())?;
     ensure_column(conn, "items", "urgent", "INTEGER NOT NULL DEFAULT 0")?;
     if ensure_column(conn, "subprojects", "sort_order", "INTEGER NOT NULL DEFAULT 0")? {
         backfill_subproject_sort_orders(conn)?;
@@ -363,6 +391,12 @@ fn migrate(conn: &Connection) -> Result<(), String> {
            local_id INTEGER NOT NULL,
            client_id TEXT NOT NULL UNIQUE,
            PRIMARY KEY (collection, local_id)
+         );
+         CREATE TABLE IF NOT EXISTS sync_tombstones (
+           collection TEXT NOT NULL,
+           client_id TEXT NOT NULL,
+           deleted_at TEXT NOT NULL,
+           PRIMARY KEY (collection, client_id)
          );",
     )
     .map_err(|err| err.to_string())?;
@@ -449,6 +483,91 @@ pub fn sync_unbind_local(conn: &Connection, collection: &str, local_id: i64) -> 
         params![collection, local_id],
     )
     .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn sync_record_tombstone(conn: &Connection, collection: &str, client_id: &str, deleted_at: &str) -> Result<(), String> {
+    if client_id.trim().is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO sync_tombstones (collection, client_id, deleted_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(collection, client_id) DO UPDATE SET deleted_at = excluded.deleted_at",
+        params![collection, client_id, deleted_at],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn sync_tombstone_at(conn: &Connection, collection: &str, client_id: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT deleted_at FROM sync_tombstones WHERE collection = ?1 AND client_id = ?2",
+        params![collection, client_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|err| err.to_string())
+}
+
+pub fn sync_clear_tombstone(conn: &Connection, collection: &str, client_id: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM sync_tombstones WHERE collection = ?1 AND client_id = ?2",
+        params![collection, client_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn sync_list_tombstones(conn: &Connection) -> Result<Vec<(String, String, String)>, String> {
+    let mut stmt = conn
+        .prepare("SELECT collection, client_id, deleted_at FROM sync_tombstones")
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| err.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())
+}
+
+fn sync_tombstone_locals(
+    conn: &Connection,
+    collection: &str,
+    id_query: &str,
+    id: i64,
+    deleted_at: &str,
+) -> Result<(), String> {
+    // collection is always a static whitelist value from callers; id_query uses ?1 for `id`.
+    let sql = format!(
+        "SELECT client_id FROM sync_ids WHERE collection = '{collection}' AND local_id IN ({id_query})"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map(params![id], |row| row.get::<_, String>(0))
+        .map_err(|err| err.to_string())?;
+    for row in rows {
+        let client_id = row.map_err(|err| err.to_string())?;
+        sync_record_tombstone(conn, collection, &client_id, deleted_at)?;
+    }
+    Ok(())
+}
+
+fn sync_tombstone_local(conn: &Connection, collection: &str, local_id: i64, deleted_at: &str) -> Result<(), String> {
+    if let Some(client_id) = conn
+        .query_row(
+            "SELECT client_id FROM sync_ids WHERE collection = ?1 AND local_id = ?2",
+            params![collection, local_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+    {
+        sync_record_tombstone(conn, collection, &client_id, deleted_at)?;
+    }
     Ok(())
 }
 
@@ -612,7 +731,10 @@ SELECT s.id, s.project_id, p.name, s.name, COALESCE(s.description, ''), s.target
        (SELECT i.repeat_days FROM items i WHERE i.subproject_id = s.id AND i.kind = 'daily' ORDER BY i.id LIMIT 1),
        (SELECT i.window_start FROM items i WHERE i.subproject_id = s.id AND i.kind = 'daily' ORDER BY i.id LIMIT 1),
        s.progress_percent,
-       COALESCE(s.sort_order, 0)
+       COALESCE(s.sort_order, 0),
+       s.modules,
+       COALESCE(s.notes, ''),
+       COALESCE(s.retrospect, '')
 FROM subprojects s
 JOIN projects p ON p.id = s.project_id
 ";
@@ -1474,7 +1596,7 @@ pub fn list_work_logs(conn: &Connection, project_id: Option<i64>) -> Result<Vec<
     rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())
 }
 
-fn purge_items(conn: &Connection, id_query: &str, id: i64) -> Result<(), String> {
+fn purge_items(conn: &Connection, id_query: &str, id: i64, tombstone: bool) -> Result<(), String> {
     let run = |sql: String| conn.execute(&sql, params![id]).map(|_| ()).map_err(|err| err.to_string());
     run(format!("DELETE FROM today_slots WHERE item_id IN ({id_query})"))?;
     run(format!("DELETE FROM today_completions WHERE item_id IN ({id_query})"))?;
@@ -1482,6 +1604,10 @@ fn purge_items(conn: &Connection, id_query: &str, id: i64) -> Result<(), String>
     run(format!("UPDATE activity_logs SET matched_item_id = NULL WHERE matched_item_id IN ({id_query})"))?;
     run(format!("UPDATE activity_logs SET incoming_item_id = NULL WHERE incoming_item_id IN ({id_query})"))?;
     run(format!("DELETE FROM reminder_state WHERE item_id IN ({id_query})"))?;
+    if tombstone {
+        let deleted_at = timeutil::now_iso();
+        sync_tombstone_locals(conn, "items", id_query, id, &deleted_at)?;
+    }
     run(format!(
         "DELETE FROM sync_ids WHERE collection = 'items' AND local_id IN ({id_query})"
     ))?;
@@ -1490,7 +1616,36 @@ fn purge_items(conn: &Connection, id_query: &str, id: i64) -> Result<(), String>
 
 /// Cascade-delete a subproject without opening a nested transaction (safe inside sync apply).
 pub fn delete_subproject_rows(conn: &Connection, id: i64) -> Result<(), String> {
-    purge_items(conn, "SELECT id FROM items WHERE subproject_id = ?1", id)?;
+    delete_subproject_rows_inner(conn, id, false)
+}
+
+fn delete_subproject_rows_inner(conn: &Connection, id: i64, tombstone: bool) -> Result<(), String> {
+    purge_items(conn, "SELECT id FROM items WHERE subproject_id = ?1", id, tombstone)?;
+    if tombstone {
+        let deleted_at = timeutil::now_iso();
+        sync_tombstone_locals(
+            conn,
+            "work_logs",
+            "SELECT id FROM work_logs WHERE subproject_id = ?1",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_locals(
+            conn,
+            "idea_tags",
+            "SELECT id FROM idea_tags WHERE subproject_id = ?1",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_locals(
+            conn,
+            "subproject_attachments",
+            "SELECT id FROM subproject_attachments WHERE subproject_id = ?1",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_local(conn, "subprojects", id, &deleted_at)?;
+    }
     conn.execute(
         "DELETE FROM sync_ids WHERE collection = 'work_logs' AND local_id IN (SELECT id FROM work_logs WHERE subproject_id = ?1)",
         params![id],
@@ -1504,6 +1659,13 @@ pub fn delete_subproject_rows(conn: &Connection, id: i64) -> Result<(), String> 
     )
     .map_err(|err| err.to_string())?;
     conn.execute("DELETE FROM idea_tags WHERE subproject_id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'subproject_attachments' AND local_id IN (SELECT id FROM subproject_attachments WHERE subproject_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute("DELETE FROM subproject_attachments WHERE subproject_id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     conn.execute("DELETE FROM reminder_state WHERE subproject_id = ?1", params![id])
         .map_err(|err| err.to_string())?;
@@ -1521,18 +1683,55 @@ pub fn delete_subproject(conn: &Connection, id: i64) -> Result<(), String> {
     if found != 1 {
         return Err("找不到这个子任务".into());
     }
-    delete_subproject_rows(&tx, id)?;
+    delete_subproject_rows_inner(&tx, id, true)?;
     tx.commit().map_err(|err| err.to_string())?;
     Ok(())
 }
 
 /// Cascade-delete a project without opening a nested transaction (safe inside sync apply).
 pub fn delete_project_rows(conn: &Connection, id: i64) -> Result<(), String> {
+    delete_project_rows_inner(conn, id, false)
+}
+
+fn delete_project_rows_inner(conn: &Connection, id: i64, tombstone: bool) -> Result<(), String> {
     purge_items(
         conn,
         "SELECT id FROM items WHERE project_id = ?1 OR subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
         id,
+        tombstone,
     )?;
+    if tombstone {
+        let deleted_at = timeutil::now_iso();
+        sync_tombstone_locals(
+            conn,
+            "work_logs",
+            "SELECT id FROM work_logs WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_locals(
+            conn,
+            "idea_tags",
+            "SELECT id FROM idea_tags WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_locals(
+            conn,
+            "subproject_attachments",
+            "SELECT id FROM subproject_attachments WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_locals(
+            conn,
+            "subprojects",
+            "SELECT id FROM subprojects WHERE project_id = ?1",
+            id,
+            &deleted_at,
+        )?;
+        sync_tombstone_local(conn, "projects", id, &deleted_at)?;
+    }
     conn.execute(
         "DELETE FROM reminder_state WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
         params![id],
@@ -1563,6 +1762,18 @@ pub fn delete_project_rows(conn: &Connection, id: i64) -> Result<(), String> {
     )
     .map_err(|err| err.to_string())?;
     conn.execute(
+        "DELETE FROM sync_ids WHERE collection = 'subproject_attachments' AND local_id IN (
+           SELECT id FROM subproject_attachments WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)
+         )",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "DELETE FROM subproject_attachments WHERE subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
+        params![id],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
         "DELETE FROM sync_ids WHERE collection = 'subprojects' AND local_id IN (SELECT id FROM subprojects WHERE project_id = ?1)",
         params![id],
     )
@@ -1583,13 +1794,13 @@ pub fn delete_project(conn: &Connection, id: i64) -> Result<(), String> {
     if found != 1 {
         return Err("找不到这个大项目".into());
     }
-    delete_project_rows(&tx, id)?;
+    delete_project_rows_inner(&tx, id, true)?;
     tx.commit().map_err(|err| err.to_string())?;
     Ok(())
 }
 
 pub fn delete_item_rows(conn: &Connection, id: i64) -> Result<(), String> {
-    purge_items(conn, "SELECT ?1", id)
+    purge_items(conn, "SELECT ?1", id, false)
 }
 
 pub fn capture(conn: &Connection, title: &str) -> Result<Item, String> {
@@ -1878,6 +2089,7 @@ pub fn set_today(conn: &Connection, ids: &[i64]) -> Result<(), String> {
         )
         .map_err(|err| err.to_string())?;
     }
+    set_setting(&tx, &format!("sync_today_slots_at:{day}"), &timeutil::now_iso())?;
     tx.commit().map_err(|err| err.to_string())?;
     Ok(())
 }
@@ -2617,6 +2829,7 @@ pub fn clear_user_data(conn: &Connection) -> Result<(), String> {
         DELETE FROM activity_logs;
         DELETE FROM work_logs;
         DELETE FROM idea_tags;
+        DELETE FROM subproject_attachments;
         DELETE FROM reminder_state;
         DELETE FROM items;
         DELETE FROM subprojects;
@@ -3084,6 +3297,174 @@ fn map_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
     })
 }
 
+fn default_subproject_modules(kind: &str) -> Vec<String> {
+    if kind == "periodic" {
+        vec!["ideas".into(), "todos".into()]
+    } else {
+        vec![
+            "progress".into(),
+            "key_progress".into(),
+            "ideas".into(),
+            "todos".into(),
+        ]
+    }
+}
+
+fn allowed_subproject_module(kind: &str, module: &str) -> bool {
+    match module {
+        "ideas" | "todos" | "notes" | "attachments" | "retrospect" => true,
+        "progress" | "key_progress" => kind != "periodic",
+        _ => false,
+    }
+}
+
+fn normalize_subproject_modules(kind: &str, raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return default_subproject_modules(kind);
+    };
+    let Ok(parsed) = serde_json::from_str::<Vec<String>>(raw) else {
+        return default_subproject_modules(kind);
+    };
+    let mut out = Vec::new();
+    for module in parsed {
+        let id = module.trim();
+        if id.is_empty() || !allowed_subproject_module(kind, id) {
+            continue;
+        }
+        if !out.iter().any(|existing| existing == id) {
+            out.push(id.to_string());
+        }
+    }
+    out
+}
+
+pub fn set_subproject_modules(conn: &Connection, id: i64, modules: &[String]) -> Result<Subproject, String> {
+    let current = get_subproject(conn, id)?;
+    let cleaned = normalize_subproject_modules(
+        &current.kind,
+        Some(&serde_json::to_string(modules).map_err(|err| err.to_string())?),
+    );
+    // Empty list is intentional (user removed every module); store "[]" instead of NULL defaults.
+    let payload = if modules.is_empty() {
+        "[]".to_string()
+    } else {
+        serde_json::to_string(&cleaned).map_err(|err| err.to_string())?
+    };
+    let stamp = timeutil::now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE subprojects SET modules = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, payload, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个子任务".into());
+    }
+    get_subproject(conn, id)
+}
+
+pub fn set_subproject_notes(conn: &Connection, id: i64, notes: &str) -> Result<Subproject, String> {
+    let stamp = timeutil::now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE subprojects SET notes = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, notes, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个子任务".into());
+    }
+    get_subproject(conn, id)
+}
+
+pub fn set_subproject_retrospect(conn: &Connection, id: i64, retrospect: &str) -> Result<Subproject, String> {
+    let stamp = timeutil::now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE subprojects SET retrospect = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, retrospect, stamp],
+        )
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个子任务".into());
+    }
+    get_subproject(conn, id)
+}
+
+fn map_attachment(row: &rusqlite::Row<'_>) -> rusqlite::Result<SubprojectAttachment> {
+    Ok(SubprojectAttachment {
+        id: row.get(0)?,
+        subproject_id: row.get(1)?,
+        title: row.get(2)?,
+        target: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
+pub fn list_subproject_attachments(conn: &Connection, subproject_id: i64) -> Result<Vec<SubprojectAttachment>, String> {
+    let _ = get_subproject(conn, subproject_id)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, subproject_id, title, target, created_at
+             FROM subproject_attachments
+             WHERE subproject_id = ?1
+             ORDER BY id",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map(params![subproject_id], map_attachment)
+        .map_err(|err| err.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())
+}
+
+pub fn add_subproject_attachment(
+    conn: &Connection,
+    subproject_id: i64,
+    title: &str,
+    target: &str,
+) -> Result<SubprojectAttachment, String> {
+    let _ = get_subproject(conn, subproject_id)?;
+    let title = title.trim();
+    let target = target.trim();
+    if target.is_empty() {
+        return Err("附件需要一个链接或路径".into());
+    }
+    let title = if title.is_empty() { target } else { title };
+    let stamp = timeutil::now_iso();
+    conn.execute(
+        "INSERT INTO subproject_attachments (subproject_id, title, target, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![subproject_id, title, target, stamp],
+    )
+    .map_err(|err| err.to_string())?;
+    let id = conn.last_insert_rowid();
+    conn.query_row(
+        "SELECT id, subproject_id, title, target, created_at FROM subproject_attachments WHERE id = ?1",
+        params![id],
+        map_attachment,
+    )
+    .map_err(|err| err.to_string())
+}
+
+pub fn delete_subproject_attachment(conn: &Connection, id: i64) -> Result<(), String> {
+    let changed = conn
+        .execute("DELETE FROM subproject_attachments WHERE id = ?1", params![id])
+        .map_err(|err| err.to_string())?;
+    if changed != 1 {
+        return Err("找不到这个附件".into());
+    }
+    Ok(())
+}
+
+pub fn get_subproject_attachment(conn: &Connection, id: i64) -> Result<SubprojectAttachment, String> {
+    conn.query_row(
+        "SELECT id, subproject_id, title, target, created_at FROM subproject_attachments WHERE id = ?1",
+        params![id],
+        map_attachment,
+    )
+    .map_err(|_| "找不到这个附件".to_string())
+}
+
 fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
     let important_int: Option<i64> = row.get(11)?;
     let urgent_int: Option<i64> = row.get(12)?;
@@ -3094,6 +3475,12 @@ fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
         quadrant_label(important, urgent)
     } else {
         None
+    };
+    let modules_raw: Option<String> = row.get(18)?;
+    let modules = if modules_raw.as_deref().map(str::trim) == Some("[]") {
+        Vec::new()
+    } else {
+        normalize_subproject_modules(&kind, modules_raw.as_deref())
     };
     Ok(Subproject {
         id: row.get(0)?,
@@ -3115,6 +3502,9 @@ fn map_subproject(row: &rusqlite::Row<'_>) -> rusqlite::Result<Subproject> {
         progress_percent: row.get(16)?,
         quadrant,
         sort_order: row.get(17)?,
+        modules,
+        notes: row.get(19)?,
+        retrospect: row.get(20)?,
     })
 }
 
@@ -3188,6 +3578,7 @@ fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
         follow_up_at: row.get(17)?,
         started_at: row.get(18)?,
         snooze_until: row.get(19)?,
+        created_at: row.get(20)?,
         project_name: row.get(23)?,
         subproject_name: row.get(24)?,
         quadrant,

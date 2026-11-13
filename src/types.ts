@@ -27,6 +27,27 @@ export type Subproject = {
   progressPercent: number | null;
   quadrant: string | null;
   sortOrder: number;
+  /** Visible detail modules: progress / key_progress / ideas / todos / notes / attachments / retrospect */
+  modules: string[];
+  notes: string;
+  retrospect: string;
+};
+
+export type SubprojectModuleId =
+  | "progress"
+  | "key_progress"
+  | "ideas"
+  | "todos"
+  | "notes"
+  | "attachments"
+  | "retrospect";
+
+export type SubprojectAttachment = {
+  id: number;
+  subprojectId: number;
+  title: string;
+  target: string;
+  createdAt: string;
 };
 
 export type WorkLog = {
@@ -83,6 +104,7 @@ export type Item = {
   followUpAt: string | null;
   startedAt: string | null;
   snoozeUntil: string | null;
+  createdAt: string;
   quadrant: string | null;
 };
 

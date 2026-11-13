@@ -72,7 +72,11 @@ public class SyncService {
       record.setUpdatedAt(serverTime);
       if (change.deleted()) {
         record.setDeletedAt(serverTime);
-        record.setPayload("{}");
+        // Keep client updatedAt in payload so later LWW compares use the delete stamp,
+        // not only the server receive time.
+        var deletePayload = objectMapper.createObjectNode();
+        deletePayload.put("updatedAt", clientTime.toString());
+        record.setPayload(writePayload(deletePayload));
       } else {
         record.setDeletedAt(null);
         record.setPayload(writePayload(change.payload()));
@@ -135,11 +139,20 @@ public class SyncService {
       JsonNode node = objectMapper.readTree(record.getPayload());
       JsonNode updatedAt = node.get("updatedAt");
       if (updatedAt != null && updatedAt.isTextual() && !updatedAt.asText().isBlank()) {
-        return Instant.parse(updatedAt.asText());
+        return parseClientInstant(updatedAt.asText());
       }
     } catch (Exception ignored) {
       // fall through
     }
     return record.getUpdatedAt();
+  }
+
+  /** Accept both Instant (Z) and OffsetDateTime (+08:00) client stamps. */
+  private Instant parseClientInstant(String raw) {
+    try {
+      return Instant.parse(raw);
+    } catch (Exception ignored) {
+      return java.time.OffsetDateTime.parse(raw).toInstant();
+    }
   }
 }

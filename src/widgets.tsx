@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { isAndroid } from "./android/platform";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -465,9 +466,73 @@ export function TodoScheduleBar({
     setCustom(null);
   }
 
+  function openMenu(kind: "due" | "remind") {
+    // Dismiss soft keyboard so the schedule sheet isn't buried under it.
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    setMenu((current) => (current === kind ? null : kind));
+  }
+
   const hour = draftTime.slice(0, 2);
   const minute = draftTime.slice(3, 5) || "00";
   const cells = monthCells(viewMonth);
+  const phone = isAndroid();
+  const popClass = phone ? "todo-pop todo-pop-sheet" : "todo-pop";
+
+  const dueMenu = menu === "due" && (
+    <div className={popClass} role="menu" aria-label="截止日期">
+      <div className="todo-pop-title">截止日期</div>
+      <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueToday)); setMenu(null); }}>
+        <span>今天</span>
+        <span className="meta">{presetHint(dueToday)}</span>
+      </button>
+      <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueTomorrow)); setMenu(null); }}>
+        <span>明天</span>
+        <span className="meta">{presetHint(dueTomorrow, true)}</span>
+      </button>
+      <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueNextWeek)); setMenu(null); }}>
+        <span>下周</span>
+        <span className="meta">{presetHint(dueNextWeek, true)}</span>
+      </button>
+      <div className="todo-pop-divider" />
+      <button type="button" className="todo-pop-item" onClick={() => openCustom("due")}>
+        <span>选择日期和时间</span>
+      </button>
+      {dueAt && (
+        <button type="button" className="todo-pop-item danger" onClick={() => { onDueChange(null); setMenu(null); }}>
+          <span>清除截止日期</span>
+        </button>
+      )}
+    </div>
+  );
+
+  const remindMenu = menu === "remind" && (
+    <div className={popClass} role="menu" aria-label="提醒">
+      <div className="todo-pop-title">提醒</div>
+      <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(later)); setMenu(null); }}>
+        <span>今日晚些时候</span>
+        <span className="meta">{presetHint(later)}</span>
+      </button>
+      <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(tomorrow)); setMenu(null); }}>
+        <span>明天</span>
+        <span className="meta">{presetHint(tomorrow, true)}</span>
+      </button>
+      <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(nextWeek)); setMenu(null); }}>
+        <span>下周</span>
+        <span className="meta">{presetHint(nextWeek, true)}</span>
+      </button>
+      <div className="todo-pop-divider" />
+      <button type="button" className="todo-pop-item" onClick={() => openCustom("remind")}>
+        <span>选择日期和时间</span>
+      </button>
+      {remindAt && (
+        <button type="button" className="todo-pop-item danger" onClick={() => { onRemindChange(null); setMenu(null); }}>
+          <span>清除提醒</span>
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className="todo-schedule">
@@ -478,39 +543,14 @@ export function TodoScheduleBar({
             className={dueAt ? "todo-icon-btn active" : "todo-icon-btn"}
             aria-label="截止日期"
             aria-expanded={menu === "due"}
-            onClick={() => setMenu((current) => current === "due" ? null : "due")}
+            onClick={() => openMenu("due")}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="1.7" />
               <path d="M3 10h18M8 3v4M16 3v4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
           </button>
-          {menu === "due" && (
-            <div className="todo-pop">
-              <div className="todo-pop-title">截止日期</div>
-              <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueToday)); setMenu(null); }}>
-                <span>今天</span>
-                <span className="meta">{presetHint(dueToday)}</span>
-              </button>
-              <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueTomorrow)); setMenu(null); }}>
-                <span>明天</span>
-                <span className="meta">{presetHint(dueTomorrow, true)}</span>
-              </button>
-              <button type="button" className="todo-pop-item" onClick={() => { onDueChange(formatLocalIso(dueNextWeek)); setMenu(null); }}>
-                <span>下周</span>
-                <span className="meta">{presetHint(dueNextWeek, true)}</span>
-              </button>
-              <div className="todo-pop-divider" />
-              <button type="button" className="todo-pop-item" onClick={() => openCustom("due")}>
-                <span>选择日期和时间</span>
-              </button>
-              {dueAt && (
-                <button type="button" className="todo-pop-item danger" onClick={() => { onDueChange(null); setMenu(null); }}>
-                  <span>清除截止日期</span>
-                </button>
-              )}
-            </div>
-          )}
+          {!phone && dueMenu}
         </div>
         <div className="todo-schedule-slot">
           <button
@@ -518,39 +558,14 @@ export function TodoScheduleBar({
             className={remindAt ? "todo-icon-btn active" : "todo-icon-btn"}
             aria-label="提醒时间"
             aria-expanded={menu === "remind"}
-            onClick={() => setMenu((current) => current === "remind" ? null : "remind")}
+            onClick={() => openMenu("remind")}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 22a2.2 2.2 0 0 0 2.1-1.5H9.9A2.2 2.2 0 0 0 12 22Z" fill="currentColor" />
               <path d="M18 16v-5a6 6 0 1 0-12 0v5l-1.8 1.8c-.4.4-.1 1.2.5 1.2h14.6c.6 0 .9-.8.5-1.2Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
             </svg>
           </button>
-          {menu === "remind" && (
-            <div className="todo-pop">
-              <div className="todo-pop-title">提醒</div>
-              <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(later)); setMenu(null); }}>
-                <span>今日晚些时候</span>
-                <span className="meta">{presetHint(later)}</span>
-              </button>
-              <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(tomorrow)); setMenu(null); }}>
-                <span>明天</span>
-                <span className="meta">{presetHint(tomorrow, true)}</span>
-              </button>
-              <button type="button" className="todo-pop-item" onClick={() => { onRemindChange(formatLocalIso(nextWeek)); setMenu(null); }}>
-                <span>下周</span>
-                <span className="meta">{presetHint(nextWeek, true)}</span>
-              </button>
-              <div className="todo-pop-divider" />
-              <button type="button" className="todo-pop-item" onClick={() => openCustom("remind")}>
-                <span>选择日期和时间</span>
-              </button>
-              {remindAt && (
-                <button type="button" className="todo-pop-item danger" onClick={() => { onRemindChange(null); setMenu(null); }}>
-                  <span>清除提醒</span>
-                </button>
-              )}
-            </div>
-          )}
+          {!phone && remindMenu}
         </div>
         {(dueAt || remindAt) && (
           <div className="todo-schedule-chips">
@@ -562,6 +577,7 @@ export function TodoScheduleBar({
       {menu && (
         <button type="button" className="todo-pop-scrim" aria-label="关闭菜单" onClick={() => setMenu(null)} />
       )}
+      {phone && (dueMenu || remindMenu)}
       {custom && (
         <div
           className="modal-backdrop picker-layer"

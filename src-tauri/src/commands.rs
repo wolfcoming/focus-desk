@@ -192,6 +192,105 @@ pub fn update_subproject(
 }
 
 #[tauri::command]
+pub fn set_subproject_modules(
+    state: State<'_, AppData>,
+    id: i64,
+    modules: Vec<String>,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_modules(&conn, id, &modules)
+}
+
+#[tauri::command]
+pub fn set_subproject_notes(
+    state: State<'_, AppData>,
+    id: i64,
+    notes: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_notes(&conn, id, &notes)
+}
+
+#[tauri::command]
+pub fn set_subproject_retrospect(
+    state: State<'_, AppData>,
+    id: i64,
+    retrospect: String,
+) -> Result<db::Subproject, String> {
+    let conn = connection(&state)?;
+    db::set_subproject_retrospect(&conn, id, &retrospect)
+}
+
+#[tauri::command]
+pub fn list_subproject_attachments(
+    state: State<'_, AppData>,
+    subproject_id: i64,
+) -> Result<Vec<db::SubprojectAttachment>, String> {
+    let conn = connection(&state)?;
+    db::list_subproject_attachments(&conn, subproject_id)
+}
+
+#[tauri::command]
+pub fn add_subproject_attachment(
+    state: State<'_, AppData>,
+    subproject_id: i64,
+    title: String,
+    target: String,
+) -> Result<db::SubprojectAttachment, String> {
+    let conn = connection(&state)?;
+    db::add_subproject_attachment(&conn, subproject_id, &title, &target)
+}
+
+#[tauri::command]
+pub fn delete_subproject_attachment(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+    let conn = connection(&state)?;
+    db::delete_subproject_attachment(&conn, id)
+}
+
+#[tauri::command]
+pub fn open_subproject_attachment(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+    let conn = connection(&state)?;
+    let attachment = db::get_subproject_attachment(&conn, id)?;
+    open_external_target(&attachment.target)
+}
+
+fn open_external_target(target: &str) -> Result<(), String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err("附件地址为空".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|err| format!("无法打开：{err}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", target])
+            .spawn()
+            .map_err(|err| format!("无法打开：{err}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|err| format!("无法打开：{err}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = target;
+        Err("当前平台暂不支持打开附件".into())
+    }
+}
+
+#[tauri::command]
 pub fn reorder_subprojects(
     state: State<'_, AppData>,
     project_id: i64,

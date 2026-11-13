@@ -1,11 +1,95 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isAndroid } from "./android/platform";
 import { api, message } from "./api";
 import type { Item, ItemDraft, Project, Subproject } from "./types";
 import { parseQuadrant, quadrantValue, QUADRANT_OPTIONS } from "./types";
-import { AiBusy, AiThinking, DateTimeField, Dialog, Empty, ErrorText, Field, TodoScheduleBar, when } from "./widgets";
+import { AiBusy, AiThinking, Chevron, DateTimeField, Dialog, Empty, ErrorText, Field, TodoScheduleBar, when } from "./widgets";
 
 const SWIPE_DELETE_WIDTH = 88;
+const WEEKDAY_SHORT = ["日", "一", "二", "三", "四", "五", "六"];
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function localDayKey(date = new Date()) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function dayKeyFromIso(iso: string | null) {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (!Number.isNaN(date.getTime())) return localDayKey(date);
+  const match = iso.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] ?? null;
+}
+
+function shiftDayKey(offset: number) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + offset);
+  return localDayKey(date);
+}
+
+function formatDayGroupLabel(dayKey: string) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  const date = new Date(year, month - 1, day, 12);
+  return `${month}月${day}日 · 周${WEEKDAY_SHORT[date.getDay()]}`;
+}
+
+function sortTodosInGroup(items: Item[]) {
+  return [...items].sort((left, right) => {
+    const leftAt = left.createdAt ?? "";
+    const rightAt = right.createdAt ?? "";
+    if (leftAt !== rightAt) return rightAt.localeCompare(leftAt);
+    return right.id - left.id;
+  });
+}
+
+type TodoDateGroup = {
+  id: string;
+  title: string;
+  items: Item[];
+  tone?: "done";
+};
+
+function groupTitleForCreatedDay(dayKey: string, today: string, yesterday: string) {
+  if (dayKey === today) return "今天";
+  if (dayKey === yesterday) return "昨天";
+  return formatDayGroupLabel(dayKey);
+}
+
+/** Group open todos by created day (newest first); completed stay in a trailing section. */
+function groupTodosByCreatedDate(todos: Item[]): TodoDateGroup[] {
+  const today = shiftDayKey(0);
+  const yesterday = shiftDayKey(-1);
+  const byDay = new Map<string, Item[]>();
+  const done: Item[] = [];
+
+  for (const item of todos) {
+    if (item.status === "done") {
+      done.push(item);
+      continue;
+    }
+    const key = dayKeyFromIso(item.createdAt) ?? today;
+    const bucket = byDay.get(key) ?? [];
+    bucket.push(item);
+    byDay.set(key, bucket);
+  }
+
+  const groups: TodoDateGroup[] = [];
+  for (const key of [...byDay.keys()].sort((a, b) => b.localeCompare(a))) {
+    groups.push({
+      id: key,
+      title: groupTitleForCreatedDay(key, today, yesterday),
+      items: sortTodosInGroup(byDay.get(key) ?? []),
+    });
+  }
+  if (done.length) {
+    groups.push({ id: "done", title: "已完成", items: sortTodosInGroup(done), tone: "done" });
+  }
+  return groups;
+}
 
 const emptyDraft = (title = "", id: number | null = null): ItemDraft => ({
   id,
@@ -89,10 +173,12 @@ export function Todos({
   const [thinking, setThinking] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [showCompose, setShowCompose] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
   const [swipeId, setSwipeId] = useState<number | null>(null);
   const [swipeX, setSwipeX] = useState(0);
   const swipeTouch = useRef<{ id: number; startX: number; startY: number; axis: "h" | "v" | null } | null>(null);
   const mobile = isAndroid();
+  const todoGroups = useMemo(() => groupTodosByCreatedDate(todos), [todos]);
 
   async function load() {
     try {
@@ -607,6 +693,148 @@ export function Todos({
     );
   }
 
+  function renderTodoRow(item: Item): ReactNode {
+    const done = item.status === "done";
+    const affil = affiliationLabel(item);
+    const loose = !done && item.projectId == null && item.subprojectId == null;
+    const offset = mobile && swipeId === item.id ? swipeX : 0;
+    const rowBody = (
+      <>
+        <div className="todo-check">
+          <input
+            type="checkbox"
+            checked={done}
+            aria-label={`完成 ${item.title}`}
+            onChange={(event) => void run(() => api.setTodoDone(item.id, event.target.checked))}
+          />
+          <div className="todo-body">
+            <button
+              type="button"
+              className="todo-title todo-title-open"
+              onClick={() => {
+                if (mobile && swipeId === item.id && swipeX < -24) {
+                  closeSwipe();
+                  return;
+                }
+                openTodo(item);
+              }}
+            >
+              {item.title}
+            </button>
+            {(item.dueAt || item.followUpAt || affil) && (
+              <span className="meta todo-meta">
+                {item.dueAt && <span>截止 {when(item.dueAt)}</span>}
+                {item.followUpAt && <span>提醒 {when(item.followUpAt)}</span>}
+                {affil && item.projectId != null ? (
+                  <button
+                    type="button"
+                    className="todo-affil-link"
+                    onClick={() => onOpen(item.projectId as number)}
+                  >
+                    {affil}
+                  </button>
+                ) : affil ? (
+                  <span>{affil}</span>
+                ) : null}
+              </span>
+            )}
+          </div>
+        </div>
+        {!mobile && (
+          <div className="actions">
+            {loose && (
+              <button type="button" className="quiet todo-link-btn" disabled={busyId != null} onClick={() => { setError(""); setLinkTarget(item); }}>
+                关联
+              </button>
+            )}
+            <button
+              type="button"
+              className="quiet todo-link-btn"
+              onClick={() => void run(async () => {
+                await api.dropItem(item.id);
+                window.dispatchEvent(new Event("desk-changed"));
+              })}
+            >
+              丢掉
+            </button>
+          </div>
+        )}
+      </>
+    );
+    if (!mobile) {
+      return (
+        <article className={done ? "row todo-row done" : "row todo-row"} key={item.id}>
+          {rowBody}
+        </article>
+      );
+    }
+    return (
+      <article className={done ? "todo-swipe-row done" : "todo-swipe-row"} key={item.id}>
+        <div className="todo-swipe-actions" aria-hidden={offset > -40}>
+          <button
+            type="button"
+            className="todo-swipe-delete"
+            onClick={() => void run(async () => {
+              await api.dropItem(item.id);
+              closeSwipe();
+              window.dispatchEvent(new Event("desk-changed"));
+            })}
+          >
+            删除
+          </button>
+        </div>
+        <div
+          className="todo-swipe-front row todo-row"
+          style={{ transform: `translateX(${offset}px)` }}
+          onTouchStart={(event) => {
+            const touch = event.changedTouches[0];
+            if (!touch) return;
+            swipeTouch.current = {
+              id: item.id,
+              startX: touch.clientX,
+              startY: touch.clientY,
+              axis: null,
+            };
+            if (swipeId != null && swipeId !== item.id) closeSwipe();
+          }}
+          onTouchMove={(event) => {
+            const state = swipeTouch.current;
+            const touch = event.changedTouches[0];
+            if (!state || state.id !== item.id || !touch) return;
+            const dx = touch.clientX - state.startX;
+            const dy = touch.clientY - state.startY;
+            if (state.axis == null) {
+              if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+              state.axis = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+            }
+            if (state.axis !== "h") return;
+            event.preventDefault();
+            const next = Math.max(-SWIPE_DELETE_WIDTH, Math.min(0, dx));
+            setSwipeId(item.id);
+            setSwipeX(next);
+          }}
+          onTouchEnd={() => {
+            const state = swipeTouch.current;
+            swipeTouch.current = null;
+            if (!state || state.id !== item.id || state.axis !== "h") return;
+            if (swipeX <= -SWIPE_DELETE_WIDTH * 0.45) {
+              setSwipeId(item.id);
+              setSwipeX(-SWIPE_DELETE_WIDTH);
+            } else {
+              closeSwipe();
+            }
+          }}
+          onTouchCancel={() => {
+            swipeTouch.current = null;
+            closeSwipe();
+          }}
+        >
+          {rowBody}
+        </div>
+      </article>
+    );
+  }
+
   const composeForm = (
     <form
       className="todo-compose"
@@ -750,146 +978,34 @@ export function Todos({
         </div>
       )}
       {todos.length === 0 && <Empty text={mobile ? "还没有待办。点右下角加号写一条。" : "还没有待办。写一条，勾选就完事。"} />}
-      <div className="list">
-        {todos.map((item) => {
-          const done = item.status === "done";
-          const affil = affiliationLabel(item);
-          const loose = !done && item.projectId == null && item.subprojectId == null;
-          const offset = mobile && swipeId === item.id ? swipeX : 0;
-          const rowBody = (
-            <>
-              <div className="todo-check">
-                <input
-                  type="checkbox"
-                  checked={done}
-                  aria-label={`完成 ${item.title}`}
-                  onChange={(event) => void run(() => api.setTodoDone(item.id, event.target.checked))}
-                />
-                <div className="todo-body">
-                  <button
-                    type="button"
-                    className="todo-title todo-title-open"
-                    onClick={() => {
-                      if (mobile && swipeId === item.id && swipeX < -24) {
-                        closeSwipe();
-                        return;
-                      }
-                      openTodo(item);
-                    }}
-                  >
-                    {item.title}
-                  </button>
-                  {(item.dueAt || item.followUpAt || affil) && (
-                    <span className="meta todo-meta">
-                      {item.dueAt && <span>截止 {when(item.dueAt)}</span>}
-                      {item.followUpAt && <span>提醒 {when(item.followUpAt)}</span>}
-                      {affil && item.projectId != null ? (
-                        <button
-                          type="button"
-                          className="todo-affil-link"
-                          onClick={() => onOpen(item.projectId as number)}
-                        >
-                          {affil}
-                        </button>
-                      ) : affil ? (
-                        <span>{affil}</span>
-                      ) : null}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {!mobile && (
-                <div className="actions">
-                  {loose && (
-                    <button type="button" className="quiet todo-link-btn" disabled={busyId != null} onClick={() => { setError(""); setLinkTarget(item); }}>
-                      关联
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="quiet todo-link-btn"
-                    onClick={() => void run(async () => {
-                      await api.dropItem(item.id);
-                      window.dispatchEvent(new Event("desk-changed"));
-                    })}
-                  >
-                    丢掉
-                  </button>
-                </div>
-              )}
-            </>
-          );
-          if (!mobile) {
-            return (
-              <article className={done ? "row todo-row done" : "row todo-row"} key={item.id}>
-                {rowBody}
-              </article>
-            );
-          }
+      <div className="todo-date-groups">
+        {todoGroups.map((group) => {
+          const isDoneGroup = group.tone === "done";
+          const showItems = !isDoneGroup || doneOpen;
           return (
-            <article className={done ? "todo-swipe-row done" : "todo-swipe-row"} key={item.id}>
-              <div className="todo-swipe-actions" aria-hidden={offset > -40}>
+            <div className="todo-date-group" key={group.id}>
+              {isDoneGroup ? (
                 <button
                   type="button"
-                  className="todo-swipe-delete"
-                  onClick={() => void run(async () => {
-                    await api.dropItem(item.id);
-                    closeSwipe();
-                    window.dispatchEvent(new Event("desk-changed"));
-                  })}
+                  className="sub-group-toggle todo-date-toggle"
+                  aria-expanded={doneOpen}
+                  onClick={() => setDoneOpen((open) => !open)}
                 >
-                  删除
+                  <Chevron open={doneOpen} />
+                  <span>{group.title} · {group.items.length}</span>
                 </button>
-              </div>
-              <div
-                className="todo-swipe-front row todo-row"
-                style={{ transform: `translateX(${offset}px)` }}
-                onTouchStart={(event) => {
-                  const touch = event.changedTouches[0];
-                  if (!touch) return;
-                  swipeTouch.current = {
-                    id: item.id,
-                    startX: touch.clientX,
-                    startY: touch.clientY,
-                    axis: null,
-                  };
-                  if (swipeId != null && swipeId !== item.id) closeSwipe();
-                }}
-                onTouchMove={(event) => {
-                  const state = swipeTouch.current;
-                  const touch = event.changedTouches[0];
-                  if (!state || state.id !== item.id || !touch) return;
-                  const dx = touch.clientX - state.startX;
-                  const dy = touch.clientY - state.startY;
-                  if (state.axis == null) {
-                    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-                    state.axis = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-                  }
-                  if (state.axis !== "h") return;
-                  event.preventDefault();
-                  const next = Math.max(-SWIPE_DELETE_WIDTH, Math.min(0, dx));
-                  setSwipeId(item.id);
-                  setSwipeX(next);
-                }}
-                onTouchEnd={() => {
-                  const state = swipeTouch.current;
-                  swipeTouch.current = null;
-                  if (!state || state.id !== item.id || state.axis !== "h") return;
-                  if (swipeX <= -SWIPE_DELETE_WIDTH * 0.45) {
-                    setSwipeId(item.id);
-                    setSwipeX(-SWIPE_DELETE_WIDTH);
-                  } else {
-                    closeSwipe();
-                  }
-                }}
-                onTouchCancel={() => {
-                  swipeTouch.current = null;
-                  closeSwipe();
-                }}
-              >
-                {rowBody}
-              </div>
-            </article>
+              ) : (
+                <div className="sub-group-label todo-date-label">
+                  {group.title}
+                  <span className="todo-date-count">{group.items.length}</span>
+                </div>
+              )}
+              {showItems && (
+                <div className="list">
+                  {group.items.map((item) => renderTodoRow(item))}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>

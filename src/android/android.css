@@ -951,6 +951,22 @@
   max-width: 100%;
 }
 
+.android-app .todo-date-groups {
+  gap: 18px;
+  margin-top: 8px;
+}
+
+.android-app .todo-date-label {
+  margin: 0 4px 8px;
+  font-size: 13px;
+}
+
+.android-app .todo-date-toggle {
+  min-height: 36px;
+  padding: 6px 4px;
+  font-size: 13px;
+}
+
 .android-app .todo-compose {
   margin: 14px 0 16px;
   padding: 12px;
@@ -1192,6 +1208,7 @@
 
 .android-app .android-compose-sheet {
   padding-top: 6px;
+  overflow: visible;
 }
 
 .android-app .android-compose-sheet .todo-compose {
@@ -1200,6 +1217,33 @@
   border: none;
   box-shadow: none;
   background: transparent;
+}
+
+/* Schedule presets: fixed sheet above compose/keyboard, not clipped dropdown. */
+.android-app .todo-pop-scrim {
+  z-index: 70;
+  background: rgba(30, 40, 48, 0.28);
+}
+
+.android-app .todo-pop.todo-pop-sheet {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: auto;
+  bottom: calc(12px + var(--android-safe-bottom, 0px));
+  width: auto;
+  max-height: min(52dvh, 420px);
+  overflow: auto;
+  z-index: 80;
+  padding: 10px 0 12px;
+  border-radius: 18px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.android-app .todo-pop.todo-pop-sheet .todo-pop-item {
+  min-height: 48px;
+  padding: 12px 16px;
+  font-size: 16px;
 }
 
 .android-app .todo-swipe-row {

@@ -65,6 +65,9 @@ struct SyncPushResponse {
 
 #[derive(Deserialize)]
 struct SyncPushResult {
+    collection: String,
+    #[serde(rename = "clientId")]
+    client_id: String,
     status: String,
 }
 
@@ -286,6 +289,13 @@ pub async fn sync_now(conn_path: &std::path::Path) -> Result<SyncResultView, Str
     {
         let conn = db::open(conn_path)?;
         apply_changes(&conn, &pull_body.changes)?;
+        // Clear tombstones only when the server accepted the delete (or a newer remote
+        // already won during apply via blocked_by_tombstone). Keep rejected deletes for retry.
+        for result in &push_body.results {
+            if result.status == "accepted" {
+                db::sync_clear_tombstone(&conn, &result.collection, &result.client_id)?;
+            }
+        }
         db::set_setting(&conn, "sync_cursor", &pull_body.server_time)?;
         db::set_setting(&conn, "sync_last_at", &timeutil_now())?;
     }
@@ -348,7 +358,8 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
     let mut subs = conn
         .prepare(
             "SELECT id, project_id, name, description, status, kind, progress, progress_percent,
-                    sort_order, last_touched_at, created_at, updated_at, target_date
+                    sort_order, last_touched_at, created_at, updated_at, target_date, modules,
+                    COALESCE(notes, ''), COALESCE(retrospect, '')
              FROM subprojects",
         )
         .map_err(|err| err.to_string())?;
@@ -368,6 +379,9 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
                 row.get::<_, String>(10)?,
                 row.get::<_, String>(11)?,
                 row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, String>(14)?,
+                row.get::<_, String>(15)?,
             ))
         })
         .map_err(|err| err.to_string())?;
@@ -386,6 +400,9 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
             created_at,
             updated_at,
             target_date,
+            modules,
+            notes,
+            retrospect,
         ) = row.map_err(|err| err.to_string())?;
         let client_id = db::sync_client_id(conn, "subprojects", id)?;
         let project_client_id = db::sync_client_id(conn, "projects", project_id)?;
@@ -407,6 +424,9 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
                 "createdAt": created_at,
                 "updatedAt": updated_at,
                 "targetDate": target_date,
+                "modules": modules,
+                "notes": notes,
+                "retrospect": retrospect,
             }),
         });
     }
@@ -414,7 +434,7 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
     let mut items = conn
         .prepare(
             "SELECT id, kind, title, notes, project_id, subproject_id, important, urgent, due_at,
-                    status, repeat_days, waiting_on, follow_up_at, created_at, updated_at
+                    status, repeat_days, waiting_on, follow_up_at, created_at, updated_at, completed_at
              FROM items",
         )
         .map_err(|err| err.to_string())?;
@@ -436,6 +456,7 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
                 row.get::<_, Option<String>>(12)?,
                 row.get::<_, String>(13)?,
                 row.get::<_, String>(14)?,
+                row.get::<_, Option<String>>(15)?,
             ))
         })
         .map_err(|err| err.to_string())?;
@@ -456,6 +477,7 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
             follow_up_at,
             created_at,
             updated_at,
+            completed_at,
         ) = row.map_err(|err| err.to_string())?;
         let client_id = db::sync_client_id(conn, "items", id)?;
         let project_client_id = match project_id {
@@ -465,6 +487,12 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
         let subproject_client_id = match subproject_id {
             Some(sid) => Some(db::sync_client_id(conn, "subprojects", sid)?),
             None => None,
+        };
+        // Todo list only shows done items when completed_at is today; must sync the stamp.
+        let completed_at = if status == "done" {
+            completed_at.or_else(|| Some(updated_at.clone()))
+        } else {
+            None
         };
         out.push(SyncChangeOut {
             collection: "items".into(),
@@ -486,6 +514,7 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
                 "followUpAt": follow_up_at,
                 "createdAt": created_at,
                 "updatedAt": updated_at,
+                "completedAt": completed_at,
             }),
         });
     }
@@ -572,7 +601,161 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
         });
     }
 
+    let mut attachments = conn
+        .prepare(
+            "SELECT id, subproject_id, title, target, created_at FROM subproject_attachments",
+        )
+        .map_err(|err| err.to_string())?;
+    let attachment_rows = attachments
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|err| err.to_string())?;
+    for row in attachment_rows {
+        let (id, subproject_id, title, target, created_at) = row.map_err(|err| err.to_string())?;
+        let client_id = db::sync_client_id(conn, "subproject_attachments", id)?;
+        let subproject_client_id = db::sync_client_id(conn, "subprojects", subproject_id)?;
+        out.push(SyncChangeOut {
+            collection: "subproject_attachments".into(),
+            client_id,
+            updated_at: created_at.clone(),
+            deleted: false,
+            payload: json!({
+                "subprojectClientId": subproject_client_id,
+                "title": title,
+                "target": target,
+                "createdAt": created_at,
+            }),
+        });
+    }
+
+    // Today focus / habit marks — natural-key client ids (no integer PK).
+    let mut slot_days: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    slot_days.insert(crate::timeutil::today_key(crate::timeutil::now()));
+    {
+        let mut days = conn
+            .prepare("SELECT DISTINCT day FROM today_slots")
+            .map_err(|err| err.to_string())?;
+        for row in days
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|err| err.to_string())?
+        {
+            slot_days.insert(row.map_err(|err| err.to_string())?);
+        }
+    }
+    for day in slot_days {
+        let mut stmt = conn
+            .prepare("SELECT position, item_id FROM today_slots WHERE day = ?1 ORDER BY position")
+            .map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map(params![day], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+            .map_err(|err| err.to_string())?;
+        let mut slots = Vec::new();
+        for row in rows {
+            let (position, item_id) = row.map_err(|err| err.to_string())?;
+            let item_client_id = db::sync_client_id(conn, "items", item_id)?;
+            slots.push(json!({ "position": position, "itemClientId": item_client_id }));
+        }
+        let updated_at = db::get_setting(conn, &format!("sync_today_slots_at:{day}"))?
+            .unwrap_or_else(timeutil_now);
+        out.push(SyncChangeOut {
+            collection: "today_slots".into(),
+            client_id: format!("today:{day}"),
+            updated_at: utc_stamp(&updated_at),
+            deleted: false,
+            payload: json!({
+                "day": day,
+                "slots": slots,
+                "updatedAt": utc_stamp(&updated_at),
+            }),
+        });
+    }
+
+    let mut completions = conn
+        .prepare("SELECT day, item_id, completed_at FROM today_completions")
+        .map_err(|err| err.to_string())?;
+    for row in completions
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| err.to_string())?
+    {
+        let (day, item_id, completed_at) = row.map_err(|err| err.to_string())?;
+        let item_client_id = db::sync_client_id(conn, "items", item_id)?;
+        out.push(SyncChangeOut {
+            collection: "today_completions".into(),
+            client_id: format!("tdone:{day}:{item_client_id}"),
+            updated_at: utc_stamp(&completed_at),
+            deleted: false,
+            payload: json!({
+                "day": day,
+                "itemClientId": item_client_id,
+                "completedAt": completed_at,
+                "updatedAt": utc_stamp(&completed_at),
+            }),
+        });
+    }
+
+    let mut marks = conn
+        .prepare("SELECT item_id, day, state FROM daily_marks")
+        .map_err(|err| err.to_string())?;
+    for row in marks
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| err.to_string())?
+    {
+        let (item_id, day, state) = row.map_err(|err| err.to_string())?;
+        let item_client_id = db::sync_client_id(conn, "items", item_id)?;
+        let updated_at = format!("{day}T12:00:00Z");
+        out.push(SyncChangeOut {
+            collection: "daily_marks".into(),
+            client_id: format!("mark:{day}:{item_client_id}"),
+            updated_at: updated_at.clone(),
+            deleted: false,
+            payload: json!({
+                "day": day,
+                "itemClientId": item_client_id,
+                "state": state,
+                "updatedAt": updated_at,
+            }),
+        });
+    }
+
+    for (collection, client_id, deleted_at) in db::sync_list_tombstones(conn)? {
+        out.push(SyncChangeOut {
+            collection,
+            client_id,
+            updated_at: utc_stamp(&deleted_at),
+            deleted: true,
+            payload: json!({ "updatedAt": utc_stamp(&deleted_at) }),
+        });
+    }
+
     Ok(out)
+}
+
+fn utc_stamp(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        })
+        .unwrap_or_else(|_| value.to_string())
 }
 
 fn collection_rank(collection: &str) -> u8 {
@@ -580,7 +763,8 @@ fn collection_rank(collection: &str) -> u8 {
         "projects" => 0,
         "subprojects" => 1,
         "items" => 2,
-        "work_logs" | "idea_tags" => 3,
+        "work_logs" | "idea_tags" | "subproject_attachments" => 3,
+        "today_slots" | "today_completions" | "daily_marks" => 4,
         _ => 9,
     }
 }
@@ -611,6 +795,10 @@ fn apply_changes(conn: &Connection, changes: &[SyncChangeIn]) -> Result<(), Stri
                 "items" => apply_item(&tx, change)?,
                 "work_logs" => apply_work_log(&tx, change)?,
                 "idea_tags" => apply_idea_tag(&tx, change)?,
+                "subproject_attachments" => apply_subproject_attachment(&tx, change)?,
+                "today_slots" => apply_today_slots(&tx, change)?,
+                "today_completions" => apply_today_completion(&tx, change)?,
+                "daily_marks" => apply_daily_mark(&tx, change)?,
                 _ => ApplyOutcome::Applied,
             };
             if matches!(outcome, ApplyOutcome::Deferred) {
@@ -628,6 +816,27 @@ fn apply_changes(conn: &Connection, changes: &[SyncChangeIn]) -> Result<(), Stri
 
 fn text<'a>(payload: &'a Value, key: &str) -> &'a str {
     payload.get(key).and_then(|value| value.as_str()).unwrap_or("")
+}
+
+fn stamp_ge(left: &str, right: &str) -> bool {
+    match (
+        chrono::DateTime::parse_from_rfc3339(left),
+        chrono::DateTime::parse_from_rfc3339(right),
+    ) {
+        (Ok(a), Ok(b)) => a >= b,
+        _ => left >= right,
+    }
+}
+
+/// Skip applying a live remote row when a local delete tombstone is still newer.
+fn blocked_by_tombstone(conn: &Connection, collection: &str, client_id: &str, updated_at: &str) -> Result<bool, String> {
+    if let Some(deleted_at) = db::sync_tombstone_at(conn, collection, client_id)? {
+        if stamp_ge(&deleted_at, updated_at) {
+            return Ok(true);
+        }
+        db::sync_clear_tombstone(conn, collection, client_id)?;
+    }
+    Ok(false)
 }
 
 fn opt_text(payload: &Value, key: &str) -> Option<String> {
@@ -653,6 +862,10 @@ fn apply_project(conn: &Connection, change: &SyncChangeIn) -> Result<(), String>
         } else {
             db::sync_unbind_client(conn, "projects", &change.client_id)?;
         }
+        db::sync_clear_tombstone(conn, "projects", &change.client_id)?;
+        return Ok(());
+    }
+    if blocked_by_tombstone(conn, "projects", &change.client_id, &change.updated_at)? {
         return Ok(());
     }
     let name = text(&change.payload, "name");
@@ -684,6 +897,10 @@ fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOut
         } else {
             db::sync_unbind_client(conn, "subprojects", &change.client_id)?;
         }
+        db::sync_clear_tombstone(conn, "subprojects", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "subprojects", &change.client_id, &change.updated_at)? {
         return Ok(ApplyOutcome::Applied);
     }
     let project_client_id = text(&change.payload, "projectClientId");
@@ -701,10 +918,19 @@ fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOut
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
     let updated_at = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
     let target_date = opt_text(&change.payload, "targetDate");
+    let modules = match change.payload.get("modules") {
+        Some(serde_json::Value::String(text)) => Some(text.clone()),
+        Some(serde_json::Value::Array(_)) => Some(change.payload["modules"].to_string()),
+        Some(serde_json::Value::Null) | None => None,
+        _ => opt_text(&change.payload, "modules"),
+    };
+    let notes = text(&change.payload, "notes");
+    let retrospect = text(&change.payload, "retrospect");
     if let Some(local_id) = db::sync_live_local_id(conn, "subprojects", &change.client_id)? {
         conn.execute(
             "UPDATE subprojects SET project_id = ?2, name = ?3, description = ?4, status = ?5, kind = ?6,
-             progress = ?7, progress_percent = ?8, sort_order = ?9, last_touched_at = ?10, updated_at = ?11, target_date = ?12
+             progress = ?7, progress_percent = ?8, sort_order = ?9, last_touched_at = ?10, updated_at = ?11, target_date = ?12,
+             modules = ?13, notes = ?14, retrospect = ?15
              WHERE id = ?1",
             params![
                 local_id,
@@ -718,15 +944,18 @@ fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOut
                 sort_order,
                 last_touched_at,
                 updated_at,
-                target_date
+                target_date,
+                modules,
+                notes,
+                retrospect
             ],
         )
         .map_err(|err| err.to_string())?;
     } else {
         conn.execute(
             "INSERT INTO subprojects (project_id, name, description, status, kind, progress, progress_percent,
-             sort_order, last_touched_at, created_at, updated_at, target_date, done_criteria)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '')",
+             sort_order, last_touched_at, created_at, updated_at, target_date, done_criteria, modules, notes, retrospect)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '', ?13, ?14, ?15)",
             params![
                 project_id,
                 name,
@@ -739,7 +968,10 @@ fn apply_subproject(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOut
                 last_touched_at,
                 created_at,
                 updated_at,
-                target_date
+                target_date,
+                modules,
+                notes,
+                retrospect
             ],
         )
         .map_err(|err| err.to_string())?;
@@ -755,6 +987,10 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, 
         } else {
             db::sync_unbind_client(conn, "items", &change.client_id)?;
         }
+        db::sync_clear_tombstone(conn, "items", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "items", &change.client_id, &change.updated_at)? {
         return Ok(ApplyOutcome::Applied);
     }
     let project_id = match change.payload.get("projectClientId").and_then(|value| value.as_str()) {
@@ -783,11 +1019,16 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, 
     let follow_up_at = opt_text(&change.payload, "followUpAt");
     let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
     let updated_at = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
+    let completed_at = if status == "done" {
+        opt_text(&change.payload, "completedAt").or_else(|| Some(updated_at.clone()))
+    } else {
+        None
+    };
     if let Some(local_id) = db::sync_live_local_id(conn, "items", &change.client_id)? {
         conn.execute(
             "UPDATE items SET kind = ?2, title = ?3, notes = ?4, project_id = ?5, subproject_id = ?6,
              important = ?7, urgent = ?8, due_at = ?9, status = ?10, repeat_days = ?11, waiting_on = ?12,
-             follow_up_at = ?13, updated_at = ?14 WHERE id = ?1",
+             follow_up_at = ?13, updated_at = ?14, completed_at = ?15 WHERE id = ?1",
             params![
                 local_id,
                 kind,
@@ -802,15 +1043,16 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, 
                 repeat_days,
                 waiting_on,
                 follow_up_at,
-                updated_at
+                updated_at,
+                completed_at
             ],
         )
         .map_err(|err| err.to_string())?;
     } else {
         conn.execute(
             "INSERT INTO items (kind, title, notes, project_id, subproject_id, important, urgent, due_at, status,
-             repeat_days, waiting_on, follow_up_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             repeat_days, waiting_on, follow_up_at, created_at, updated_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 kind,
                 title,
@@ -825,7 +1067,8 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, 
                 waiting_on,
                 follow_up_at,
                 created_at,
-                updated_at
+                updated_at,
+                completed_at
             ],
         )
         .map_err(|err| err.to_string())?;
@@ -843,6 +1086,10 @@ fn apply_work_log(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutco
         } else {
             db::sync_unbind_client(conn, "work_logs", &change.client_id)?;
         }
+        db::sync_clear_tombstone(conn, "work_logs", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "work_logs", &change.client_id, &change.updated_at)? {
         return Ok(ApplyOutcome::Applied);
     }
     let sub_client = text(&change.payload, "subprojectClientId");
@@ -881,6 +1128,10 @@ fn apply_idea_tag(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutco
         } else {
             db::sync_unbind_client(conn, "idea_tags", &change.client_id)?;
         }
+        db::sync_clear_tombstone(conn, "idea_tags", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "idea_tags", &change.client_id, &change.updated_at)? {
         return Ok(ApplyOutcome::Applied);
     }
     let sub_client = text(&change.payload, "subprojectClientId");
@@ -909,5 +1160,154 @@ fn apply_idea_tag(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutco
         .map_err(|err| err.to_string())?;
         db::sync_bind(conn, "idea_tags", conn.last_insert_rowid(), &change.client_id)?;
     }
+    Ok(ApplyOutcome::Applied)
+}
+
+fn apply_subproject_attachment(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
+    if change.deleted {
+        if let Some(local_id) = db::sync_live_local_id(conn, "subproject_attachments", &change.client_id)? {
+            conn.execute("DELETE FROM subproject_attachments WHERE id = ?1", params![local_id])
+                .map_err(|err| err.to_string())?;
+            db::sync_unbind_local(conn, "subproject_attachments", local_id)?;
+        } else {
+            db::sync_unbind_client(conn, "subproject_attachments", &change.client_id)?;
+        }
+        db::sync_clear_tombstone(conn, "subproject_attachments", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "subproject_attachments", &change.client_id, &change.updated_at)? {
+        return Ok(ApplyOutcome::Applied);
+    }
+    let sub_client = text(&change.payload, "subprojectClientId");
+    let Some(subproject_id) = db::sync_live_local_id(conn, "subprojects", sub_client)? else {
+        return Ok(ApplyOutcome::Deferred);
+    };
+    let title = text(&change.payload, "title");
+    let target = text(&change.payload, "target");
+    let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
+    if let Some(local_id) = db::sync_live_local_id(conn, "subproject_attachments", &change.client_id)? {
+        conn.execute(
+            "UPDATE subproject_attachments SET subproject_id = ?2, title = ?3, target = ?4, created_at = ?5 WHERE id = ?1",
+            params![local_id, subproject_id, title, target, created_at],
+        )
+        .map_err(|err| err.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT INTO subproject_attachments (subproject_id, title, target, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![subproject_id, title, target, created_at],
+        )
+        .map_err(|err| err.to_string())?;
+        db::sync_bind(conn, "subproject_attachments", conn.last_insert_rowid(), &change.client_id)?;
+    }
+    Ok(ApplyOutcome::Applied)
+}
+
+fn apply_today_slots(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
+    let day = opt_text(&change.payload, "day")
+        .or_else(|| change.client_id.strip_prefix("today:").map(str::to_string))
+        .unwrap_or_default();
+    if day.is_empty() {
+        return Ok(ApplyOutcome::Applied);
+    }
+    if change.deleted {
+        conn.execute("DELETE FROM today_slots WHERE day = ?1", params![day])
+            .map_err(|err| err.to_string())?;
+        db::sync_clear_tombstone(conn, "today_slots", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "today_slots", &change.client_id, &change.updated_at)? {
+        return Ok(ApplyOutcome::Applied);
+    }
+    let mut resolved: Vec<(i64, i64)> = Vec::new();
+    if let Some(Value::Array(slots)) = change.payload.get("slots") {
+        for slot in slots {
+            let item_client = slot.get("itemClientId").and_then(|v| v.as_str()).unwrap_or("");
+            if item_client.is_empty() {
+                continue;
+            }
+            let Some(item_id) = db::sync_live_local_id(conn, "items", item_client)? else {
+                return Ok(ApplyOutcome::Deferred);
+            };
+            let position = slot.get("position").and_then(|v| v.as_i64()).unwrap_or((resolved.len() as i64) + 1);
+            resolved.push((position, item_id));
+        }
+    }
+    conn.execute("DELETE FROM today_slots WHERE day = ?1", params![day])
+        .map_err(|err| err.to_string())?;
+    for (position, item_id) in resolved {
+        conn.execute(
+            "INSERT INTO today_slots (day, position, item_id) VALUES (?1, ?2, ?3)",
+            params![day, position, item_id],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    let stamp = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
+    db::set_setting(conn, &format!("sync_today_slots_at:{day}"), &stamp)?;
+    Ok(ApplyOutcome::Applied)
+}
+
+fn apply_today_completion(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
+    if change.deleted {
+        let day = text(&change.payload, "day");
+        let item_client = text(&change.payload, "itemClientId");
+        if let Some(item_id) = db::sync_live_local_id(conn, "items", item_client)? {
+            let _ = conn.execute(
+                "DELETE FROM today_completions WHERE day = ?1 AND item_id = ?2",
+                params![day, item_id],
+            );
+        }
+        db::sync_clear_tombstone(conn, "today_completions", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "today_completions", &change.client_id, &change.updated_at)? {
+        return Ok(ApplyOutcome::Applied);
+    }
+    let day = text(&change.payload, "day");
+    let item_client = text(&change.payload, "itemClientId");
+    let Some(item_id) = db::sync_live_local_id(conn, "items", item_client)? else {
+        return Ok(ApplyOutcome::Deferred);
+    };
+    let completed_at = opt_text(&change.payload, "completedAt").unwrap_or_else(|| change.updated_at.clone());
+    conn.execute(
+        "INSERT INTO today_completions (day, item_id, completed_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(day, item_id) DO UPDATE SET completed_at = excluded.completed_at",
+        params![day, item_id, completed_at],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(ApplyOutcome::Applied)
+}
+
+fn apply_daily_mark(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
+    if change.deleted {
+        let day = text(&change.payload, "day");
+        let item_client = text(&change.payload, "itemClientId");
+        if let Some(item_id) = db::sync_live_local_id(conn, "items", item_client)? {
+            let _ = conn.execute(
+                "DELETE FROM daily_marks WHERE item_id = ?1 AND day = ?2",
+                params![item_id, day],
+            );
+        }
+        db::sync_clear_tombstone(conn, "daily_marks", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "daily_marks", &change.client_id, &change.updated_at)? {
+        return Ok(ApplyOutcome::Applied);
+    }
+    let day = text(&change.payload, "day");
+    let item_client = text(&change.payload, "itemClientId");
+    let Some(item_id) = db::sync_live_local_id(conn, "items", item_client)? else {
+        return Ok(ApplyOutcome::Deferred);
+    };
+    let state = {
+        let value = text(&change.payload, "state");
+        if value.is_empty() { "done" } else { value }
+    };
+    conn.execute(
+        "INSERT INTO daily_marks (item_id, day, state) VALUES (?1, ?2, ?3)
+         ON CONFLICT(item_id, day) DO UPDATE SET state = excluded.state",
+        params![item_id, day, state],
+    )
+    .map_err(|err| err.to_string())?;
     Ok(ApplyOutcome::Applied)
 }

@@ -672,6 +672,7 @@ mod tests {
             follow_up_at: None,
             started_at: None,
             snooze_until: None,
+            created_at: "2026-11-01T10:00:00+08:00".into(),
             quadrant: None,
         }
     }
