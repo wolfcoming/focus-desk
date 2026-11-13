@@ -137,9 +137,10 @@ pub fn move_note(conn: &Connection, id: i64, parent_id: Option<i64>) -> Result<N
         }
     }
     let sort = next_sort(conn, parent_id)?;
+    let stamp = timeutil::now_iso();
     conn.execute(
-        "UPDATE note_nodes SET parent_id = ?2, sort_order = ?3 WHERE id = ?1",
-        params![id, parent_id, sort],
+        "UPDATE note_nodes SET parent_id = ?2, sort_order = ?3, updated_at = ?4 WHERE id = ?1",
+        params![id, parent_id, sort, stamp],
     )
     .map_err(|err| err.to_string())?;
     get_note(conn, id)
@@ -154,8 +155,25 @@ pub fn delete_note(conn: &Connection, id: i64) -> Result<(), String> {
         return Err("笔记不存在".into());
     }
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
-    delete_tree(&tx, id)?;
+    let ids = collect_postorder(&tx, id)?;
+    let deleted_at = timeutil::now_iso();
+    for nid in &ids {
+        crate::db::sync_tombstone_existing(&tx, "note_nodes", *nid, &deleted_at)?;
+    }
+    delete_note_rows(&tx, id)?;
     tx.commit().map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Remove a note and its descendants without recording a sync delete.
+/// Used when a remote delete is applied locally.
+pub fn delete_note_rows(conn: &Connection, id: i64) -> Result<(), String> {
+    let ids = collect_postorder(conn, id)?;
+    for nid in ids {
+        crate::db::sync_unbind_local(conn, "note_nodes", nid)?;
+        conn.execute("DELETE FROM note_nodes WHERE id = ?1", params![nid])
+            .map_err(|err| err.to_string())?;
+    }
     Ok(())
 }
 
@@ -225,7 +243,7 @@ fn is_inside(conn: &Connection, ancestor: i64, mut node: i64) -> Result<bool, St
     Err("笔记层级异常".into())
 }
 
-fn delete_tree(conn: &Connection, id: i64) -> Result<(), String> {
+fn collect_postorder(conn: &Connection, id: i64) -> Result<Vec<i64>, String> {
     let children = {
         let mut stmt = conn
             .prepare("SELECT id FROM note_nodes WHERE parent_id = ?1")
@@ -236,12 +254,12 @@ fn delete_tree(conn: &Connection, id: i64) -> Result<(), String> {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.to_string())?
     };
+    let mut ids = Vec::new();
     for child in children {
-        delete_tree(conn, child)?;
+        ids.extend(collect_postorder(conn, child)?);
     }
-    conn.execute("DELETE FROM note_nodes WHERE id = ?1", params![id])
-        .map_err(|err| err.to_string())?;
-    Ok(())
+    ids.push(id);
+    Ok(ids)
 }
 
 fn clean_title(kind: &str, title: &str) -> String {
@@ -276,6 +294,21 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         ensure_schema(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_ids (
+               collection TEXT NOT NULL,
+               local_id INTEGER NOT NULL,
+               client_id TEXT NOT NULL UNIQUE,
+               PRIMARY KEY (collection, local_id)
+             );
+             CREATE TABLE IF NOT EXISTS sync_tombstones (
+               collection TEXT NOT NULL,
+               client_id TEXT NOT NULL,
+               deleted_at TEXT NOT NULL,
+               PRIMARY KEY (collection, client_id)
+             );",
+        )
+        .unwrap();
         conn
     }
 

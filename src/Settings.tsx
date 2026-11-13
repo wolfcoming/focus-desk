@@ -211,7 +211,7 @@ export function Settings({
           </div>
         ) : (
           <div className="stack">
-            <p className="note">还没有登录云端账号。登录后可同步项目与待办。</p>
+            <p className="note">还没有登录云端账号。登录后可同步项目、待办和笔记。</p>
             <ErrorText text={syncError} />
             {syncNote && <p className="note">{syncNote}</p>}
             {onRequestAuth && (

@@ -106,7 +106,7 @@ export function Auth({
   return (
     <section className="auth-page">
       <h1>{mode === "login" ? "登录" : "注册"}</h1>
-      <p className="lead">登录后可同步项目、待办与进展。</p>
+      <p className="lead">登录后可同步项目、待办、进展和笔记。</p>
       <ErrorText text={error} />
       <div className="stack auth-card">
         <div className="auth-tabs" role="tablist">

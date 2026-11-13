@@ -152,7 +152,7 @@ export function DesktopApp() {
           ) : (
             <button type="button" className="account-name-btn" onClick={() => setPage("auth")}>
               <strong>登录</strong>
-              <span>同步项目与待办</span>
+              <span>同步项目、待办和笔记</span>
             </button>
           )}
         </div>

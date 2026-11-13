@@ -92,7 +92,7 @@
 
 .android-tabbar {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 0;
   min-height: calc(var(--android-tabbar) + var(--android-safe-bottom));
   padding: 6px 10px calc(8px + var(--android-safe-bottom));
@@ -122,7 +122,7 @@
 }
 
 .android-tab-icon {
-  width: 56px;
+  width: 44px;
   height: 30px;
   display: grid;
   place-items: center;
@@ -1174,6 +1174,491 @@
   padding-bottom: 72px;
 }
 
+.android-notes {
+  position: relative;
+  min-height: 100%;
+  padding-bottom: 72px;
+}
+.android-notes-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.android-notes-head h1 {
+  margin: 2px 0 14px;
+  font-size: 28px;
+  font-weight: 720;
+  letter-spacing: -0.03em;
+}
+.android-notes-menu-wrap { position: relative; }
+.android-app .android-notes-more,
+.android-app .android-notes-menu-scrim {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+}
+.android-app .android-notes-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+.android-app .android-notes-more svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  stroke: none;
+}
+.android-notes-menu {
+  position: absolute;
+  top: 42px;
+  right: 0;
+  z-index: 31;
+  min-width: 148px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--surface-bright);
+  box-shadow: 0 12px 32px rgba(42, 54, 64, 0.16);
+}
+.android-app .android-notes-menu button {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+.android-notes-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.android-notes-back svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.android-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.android-notes-section {
+  margin: 8px 2px 0;
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+.android-note-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 14px 12px;
+  text-align: left;
+  border: 0;
+  border-radius: 16px;
+  background: var(--surface-bright);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--line) 55%, transparent);
+}
+.android-note-card strong {
+  display: block;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.android-note-card-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.android-note-card-copy span {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.android-note-card-copy em {
+  color: var(--ink-faint);
+  font-style: normal;
+  font-size: 12px;
+}
+.android-note-folder-icon,
+.android-note-doc-icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+}
+.android-note-folder-icon svg,
+.android-note-doc-icon svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.android-note-folder-icon { color: #e2a15c; }
+.android-note-folder-icon svg { fill: color-mix(in srgb, #e2a15c 18%, transparent); stroke: currentColor; }
+.android-note-doc-icon { color: #4c8dff; }
+.android-note-doc-icon svg { stroke: currentColor; }
+.android-notes-empty {
+  margin: 12px 2px;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+.android-note-composer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(20, 28, 36, 0.45);
+}
+.android-note-composer {
+  width: 100%;
+  max-height: min(78dvh, 640px);
+  margin-bottom: var(--keyboard-inset);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px calc(12px + var(--android-safe-bottom));
+  border-radius: 18px 18px 0 0;
+  background: var(--surface-bright);
+  box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.18);
+}
+.android-note-composer.is-expanded {
+  max-height: none;
+  height: calc(100dvh - var(--keyboard-inset) - 12px);
+}
+.android-note-crumb {
+  color: #d3922a;
+  font-size: 13px;
+  font-weight: 650;
+}
+.android-note-composer-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.android-app .android-note-composer input.android-note-plain,
+.android-app .android-note-composer textarea.android-note-plain,
+.android-app .android-note-reader-title {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  border-radius: 0;
+}
+.android-note-composer-title-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0 8px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.android-note-expand {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+}
+.android-note-expand svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.android-note-composer textarea {
+  flex: 1 1 auto;
+  min-height: 140px;
+  resize: none;
+  padding: 8px 0;
+  font-size: 16px;
+  line-height: 1.55;
+}
+.android-note-folder-sheet {
+  max-height: none;
+}
+.android-note-folder-sheet input {
+  font-size: 18px;
+  font-weight: 650;
+  padding: 8px 0 12px;
+}
+.android-note-reader {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-bright);
+  padding:
+    calc(var(--android-safe-top) + 6px)
+    20px
+    calc(var(--android-safe-bottom) + 16px);
+}
+.android-note-reader-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+}
+.android-note-read-title {
+  margin: 8px 0 14px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+}
+.android-note-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 28, 36, 0.45);
+}
+.android-note-confirm {
+  width: min(100%, 320px);
+  padding: 18px 16px 14px;
+  border-radius: 16px;
+  background: var(--surface-bright);
+}
+.android-note-confirm p {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.android-note-confirm div { display: flex; justify-content: flex-end; gap: 8px; }
+.android-app .android-note-confirm button {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+}
+.android-app .android-note-confirm button.is-danger { background: #9b3b2a; color: #fff; }
+.android-note-batch {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas-bottom);
+  padding-top: calc(var(--android-safe-top) + 6px);
+}
+.android-note-batch-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 12px 8px;
+}
+.android-note-batch-bar strong { font-size: 17px; font-weight: 700; }
+.android-app .android-note-batch-all,
+.android-app .android-note-batch-cancel {
+  min-height: 36px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.android-app .android-note-batch-all { justify-self: start; color: #3b82f6; font-weight: 650; }
+.android-app .android-note-batch-cancel { justify-self: end; color: var(--ink-soft); }
+.android-note-batch-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 16px 12px;
+}
+.android-note-check {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid #c5d0d8;
+  border-radius: 999px;
+  color: #fff;
+}
+.android-note-check.is-on { border-color: #3b82f6; background: #3b82f6; }
+.android-note-check svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.android-note-batch-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 16px calc(12px + var(--android-safe-bottom));
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+.android-app .android-note-batch-delete,
+.android-app .android-note-batch-move {
+  min-height: 48px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.android-app .android-note-batch-delete { background: #e7eef3; color: #a8b6c0; }
+.android-app .android-note-batch-delete.is-ready { color: var(--ink); }
+.android-app .android-note-batch-move { background: #3b82f6; color: #fff; }
+.android-app .android-note-batch-move:disabled,
+.android-app .android-note-batch-delete:disabled { opacity: 1; }
+.android-note-move-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.android-note-move-list { display: flex; flex-direction: column; max-height: 46dvh; overflow: auto; }
+.android-app .android-note-move-list button {
+  min-height: 48px;
+  padding: 10px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+.android-app .android-note-reader-bar button {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+}
+.android-app .android-note-reader-bar button svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.android-note-reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 8px;
+}
+.android-app .android-note-reader-title {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 4px 0 10px;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+.android-note-doc {
+  min-height: 40%;
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--ink);
+  word-break: break-word;
+}
+.android-note-doc:focus { outline: none; }
+.android-note-doc h1 { font-size: 26px; line-height: 1.35; margin: 0.7em 0 0.35em; }
+.android-note-doc h2 { font-size: 22px; line-height: 1.35; margin: 0.85em 0 0.3em; }
+.android-note-doc h3 { font-size: 18px; line-height: 1.4; margin: 0.8em 0 0.25em; }
+.android-note-doc p { margin: 0.4em 0; }
+.android-note-edit-fab {
+  position: absolute;
+  right: calc(18px + var(--android-safe-right));
+  bottom: calc(var(--android-safe-bottom) + 22px);
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  min-height: 52px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-bright);
+  color: #3b82f6;
+  box-shadow: 0 8px 22px rgba(42, 54, 64, 0.16);
+}
+.android-note-edit-fab svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.android-note-composer-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+.android-note-save {
+  min-height: 36px;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-weight: 650;
+}
+.android-note-save:disabled { opacity: 0.45; }
+
 .android-app .android-fab {
   position: fixed;
   right: calc(16px + var(--android-safe-right));
@@ -1205,6 +1690,21 @@
 .android-app .android-fab:active {
   transform: scale(0.96);
 }
+
+.android-app .android-notes-fab {
+  z-index: 45;
+  border: 0;
+  border-radius: 999px;
+  background: #3b82f6;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35);
+}
+.android-app .android-notes-fab svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 2.2;
+}
+.android-app .android-notes-fab:active { transform: scale(0.96); }
 
 .android-app .android-compose-sheet {
   padding-top: 6px;

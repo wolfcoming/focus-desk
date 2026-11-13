@@ -6,6 +6,7 @@ import { api, message } from "../api";
 import { ProjectOverlays, Projects } from "../Projects";
 import { Auth } from "../Auth";
 import { Settings } from "../Settings";
+import { AndroidNotes } from "./Notes";
 import { Today } from "../Today";
 import { Todos } from "../Todos";
 import type { Project } from "../types";
@@ -24,10 +25,11 @@ import {
 import { ProjectsHome } from "./ProjectsHome";
 import "./android.css";
 
-const TAB_ORDER: Tab[] = ["todos", "today", "projects", "more"];
+const TAB_ORDER: Tab[] = ["todos", "notes", "today", "projects", "more"];
 
 const TAB_LABEL: Record<Tab, string> = {
   todos: "待办",
+  notes: "笔记",
   today: "今天",
   projects: "项目",
   more: "我的",
@@ -38,6 +40,13 @@ const TAB_ICON: Record<Tab, ReactNode> = {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M9.5 7.5h10M9.5 12h10M9.5 16.5h10" />
       <path d="M5 7.5l1.2 1.2L8.2 6.5M5 12l1.2 1.2L8.2 11M5 16.5l1.2 1.2L8.2 15.5" />
+    </svg>
+  ),
+  notes: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 4.5h7.2L18 8.2V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V6A1.5 1.5 0 0 1 7 4.5Z" />
+      <path d="M14 4.8V8.4h4" />
+      <path d="M8.5 12.2h7M8.5 15.4h5" />
     </svg>
   ),
   today: (
@@ -359,6 +368,7 @@ export function AndroidApp() {
 
       <main className="android-main">
         <ErrorText text={error} />
+        {top.type === "tab" && top.tab === "notes" ? <AndroidNotes revision={revision} /> : null}
         {top.type === "tab" && top.tab === "today" && (
           <Today revision={revision} onOpen={openProject} onOpenTodos={() => goTab("todos")} />
         )}

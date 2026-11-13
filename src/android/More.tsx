@@ -29,7 +29,7 @@ export function More({
   const title = signedIn ? (displayName || "未设置用户名") : "未登录";
   const subtitle = signedIn
     ? (email || "已登录")
-    : "登录后可同步项目与待办";
+    : "登录后可同步项目、待办和笔记";
   const avatarText = signedIn
     ? (displayName || email || "?").trim().slice(0, 1).toUpperCase()
     : "我";

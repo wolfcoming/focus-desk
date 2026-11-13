@@ -736,6 +736,55 @@ fn collect_push_changes(conn: &Connection) -> Result<Vec<SyncChangeOut>, String>
         });
     }
 
+    let mut note_nodes = conn
+        .prepare(
+            "SELECT id, parent_id, kind, title, body, starred, pinned, sort_order, created_at, updated_at
+             FROM note_nodes",
+        )
+        .map_err(|err| err.to_string())?;
+    let note_rows = note_nodes
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+            ))
+        })
+        .map_err(|err| err.to_string())?;
+    for row in note_rows {
+        let (id, parent_id, kind, title, body, starred, pinned, sort_order, created_at, updated_at) =
+            row.map_err(|err| err.to_string())?;
+        let client_id = db::sync_client_id(conn, "note_nodes", id)?;
+        let parent_client_id = match parent_id {
+            Some(pid) => Some(db::sync_client_id(conn, "note_nodes", pid)?),
+            None => None,
+        };
+        out.push(SyncChangeOut {
+            collection: "note_nodes".into(),
+            client_id,
+            updated_at: updated_at.clone(),
+            deleted: false,
+            payload: json!({
+                "kind": kind,
+                "title": title,
+                "body": body,
+                "starred": starred != 0,
+                "pinned": pinned != 0,
+                "sortOrder": sort_order,
+                "parentClientId": parent_client_id,
+                "createdAt": created_at,
+                "updatedAt": updated_at,
+            }),
+        });
+    }
+
     for (collection, client_id, deleted_at) in db::sync_list_tombstones(conn)? {
         out.push(SyncChangeOut {
             collection,
@@ -765,6 +814,7 @@ fn collection_rank(collection: &str) -> u8 {
         "items" => 2,
         "work_logs" | "idea_tags" | "subproject_attachments" => 3,
         "today_slots" | "today_completions" | "daily_marks" => 4,
+        "note_nodes" => 5,
         _ => 9,
     }
 }
@@ -779,7 +829,8 @@ fn apply_changes(conn: &Connection, changes: &[SyncChangeIn]) -> Result<(), Stri
     pending.sort_by_key(|change| collection_rank(&change.collection));
     let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
     // Parents may land after children when ordered only by updated_at; retry deferred rows.
-    for _ in 0..6 {
+    // Note folders can nest, so keep going while a pass still places another parent.
+    for _ in 0..64 {
         if pending.is_empty() {
             break;
         }
@@ -799,6 +850,7 @@ fn apply_changes(conn: &Connection, changes: &[SyncChangeIn]) -> Result<(), Stri
                 "today_slots" => apply_today_slots(&tx, change)?,
                 "today_completions" => apply_today_completion(&tx, change)?,
                 "daily_marks" => apply_daily_mark(&tx, change)?,
+                "note_nodes" => apply_note_node(&tx, change)?,
                 _ => ApplyOutcome::Applied,
             };
             if matches!(outcome, ApplyOutcome::Deferred) {
@@ -1310,4 +1362,111 @@ fn apply_daily_mark(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOut
     )
     .map_err(|err| err.to_string())?;
     Ok(ApplyOutcome::Applied)
+}
+
+fn apply_note_node(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, String> {
+    if change.deleted {
+        if let Some(local_id) = db::sync_live_local_id(conn, "note_nodes", &change.client_id)? {
+            crate::notes::delete_note_rows(conn, local_id)?;
+        } else {
+            db::sync_unbind_client(conn, "note_nodes", &change.client_id)?;
+        }
+        db::sync_clear_tombstone(conn, "note_nodes", &change.client_id)?;
+        return Ok(ApplyOutcome::Applied);
+    }
+    if blocked_by_tombstone(conn, "note_nodes", &change.client_id, &change.updated_at)? {
+        return Ok(ApplyOutcome::Applied);
+    }
+    let kind = text(&change.payload, "kind");
+    if kind != "folder" && kind != "note" {
+        return Ok(ApplyOutcome::Applied);
+    }
+    let parent_id = match opt_text(&change.payload, "parentClientId") {
+        None => None,
+        Some(parent_client_id) => match db::sync_live_local_id(conn, "note_nodes", &parent_client_id)? {
+            Some(id) => Some(id),
+            None => return Ok(ApplyOutcome::Deferred),
+        },
+    };
+    let title = text(&change.payload, "title");
+    let body = if kind == "folder" { "" } else { text(&change.payload, "body") };
+    let starred = bool_num(&change.payload, "starred");
+    let pinned = bool_num(&change.payload, "pinned");
+    let sort_order = change.payload.get("sortOrder").and_then(|value| value.as_i64()).unwrap_or(0);
+    let created_at = opt_text(&change.payload, "createdAt").unwrap_or_else(|| change.updated_at.clone());
+    let updated_at = opt_text(&change.payload, "updatedAt").unwrap_or_else(|| change.updated_at.clone());
+    if let Some(local_id) = db::sync_live_local_id(conn, "note_nodes", &change.client_id)? {
+        conn.execute(
+            "UPDATE note_nodes SET parent_id = ?2, kind = ?3, title = ?4, body = ?5, starred = ?6,
+             pinned = ?7, sort_order = ?8, updated_at = ?9 WHERE id = ?1",
+            params![local_id, parent_id, kind, title, body, starred, pinned, sort_order, updated_at],
+        )
+        .map_err(|err| err.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT INTO note_nodes
+               (parent_id, kind, title, body, starred, pinned, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![parent_id, kind, title, body, starred, pinned, sort_order, created_at, updated_at],
+        )
+        .map_err(|err| err.to_string())?;
+        db::sync_bind(conn, "note_nodes", conn.last_insert_rowid(), &change.client_id)?;
+    }
+    Ok(ApplyOutcome::Applied)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh() -> Connection {
+        let path = std::env::temp_dir().join(format!("focus-note-sync-{}.sqlite", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_file(&path);
+        db::open(&path).unwrap()
+    }
+
+    fn inbound(change: &SyncChangeOut) -> SyncChangeIn {
+        SyncChangeIn {
+            collection: change.collection.clone(),
+            client_id: change.client_id.clone(),
+            updated_at: change.updated_at.clone(),
+            deleted: change.deleted,
+            payload: change.payload.clone(),
+        }
+    }
+
+    #[test]
+    fn notes_push_and_apply_across_databases() {
+        let source = fresh();
+        let folder = crate::notes::create_note_node(&source, "folder", None, "工作").unwrap();
+        let note = crate::notes::create_note_node(&source, "note", Some(folder.id), "周报").unwrap();
+        crate::notes::save_note(&source, note.id, "周报", "<p>本周</p>").unwrap();
+
+        let pushed = collect_push_changes(&source).unwrap();
+        let notes: Vec<_> = pushed.iter().filter(|change| change.collection == "note_nodes").collect();
+        assert_eq!(notes.len(), 2);
+        let child = notes.iter().find(|change| change.payload["title"] == "周报").unwrap();
+        assert!(child.payload["parentClientId"].is_string());
+
+        let target = fresh();
+        let mut reversed: Vec<_> = notes.into_iter().map(inbound).collect();
+        reversed.sort_by_key(|change| if change.payload["kind"] == "note" { 0 } else { 1 });
+        apply_changes(&target, &reversed).unwrap();
+        let listed = crate::notes::list_notes(&target).unwrap();
+        assert_eq!(listed.len(), 2);
+        let copied = listed.iter().find(|node| node.title == "周报").unwrap();
+        assert_eq!(copied.body, "<p>本周</p>");
+        assert!(copied.parent_id.is_some());
+
+        crate::notes::delete_note(&source, folder.id).unwrap();
+        let after_delete = collect_push_changes(&source).unwrap();
+        let deletes: Vec<_> = after_delete
+            .iter()
+            .filter(|change| change.collection == "note_nodes" && change.deleted)
+            .map(inbound)
+            .collect();
+        assert_eq!(deletes.len(), 2);
+        apply_changes(&target, &deletes).unwrap();
+        assert!(crate::notes::list_notes(&target).unwrap().is_empty());
+    }
 }

@@ -1,4 +1,4 @@
-export type Tab = "todos" | "today" | "projects" | "more";
+export type Tab = "todos" | "notes" | "today" | "projects" | "more";
 
 export type Frame =
   | { type: "tab"; tab: Tab }

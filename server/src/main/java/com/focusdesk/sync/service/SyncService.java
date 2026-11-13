@@ -29,7 +29,9 @@ public class SyncService {
       "today_completions",
       "daily_marks",
       "work_logs",
-      "idea_tags"
+      "idea_tags",
+      "subproject_attachments",
+      "note_nodes"
   );
 
   private final SyncRecordRepository records;

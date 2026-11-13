@@ -441,7 +441,7 @@ pub fn sync_live_local_id(conn: &Connection, collection: &str, client_id: &str) 
         return Ok(None);
     };
     let table = match collection {
-        "projects" | "subprojects" | "items" | "work_logs" | "idea_tags" => collection,
+        "projects" | "subprojects" | "items" | "work_logs" | "idea_tags" | "note_nodes" => collection,
         _ => return Ok(Some(local_id)),
     };
     let exists: bool = conn
@@ -555,6 +555,10 @@ fn sync_tombstone_locals(
         sync_record_tombstone(conn, collection, &client_id, deleted_at)?;
     }
     Ok(())
+}
+
+pub fn sync_tombstone_existing(conn: &Connection, collection: &str, local_id: i64, deleted_at: &str) -> Result<(), String> {
+    sync_tombstone_local(conn, collection, local_id, deleted_at)
 }
 
 fn sync_tombstone_local(conn: &Connection, collection: &str, local_id: i64, deleted_at: &str) -> Result<(), String> {
