@@ -1,6 +1,7 @@
 mod ai;
 mod commands;
 mod db;
+mod notes;
 mod judge;
 mod schedule;
 mod secret;
@@ -141,7 +142,15 @@ pub fn run() {
             commands::sync_login,
             commands::sync_logout,
             commands::sync_set_display_name,
-            commands::sync_now
+            commands::sync_now,
+            commands::list_note_nodes,
+            commands::create_note_node,
+            commands::save_note_node,
+            commands::rename_note_node,
+            commands::set_note_starred,
+            commands::set_note_pinned,
+            commands::move_note_node,
+            commands::delete_note_node
         ])
         .run(tauri::generate_context!())
         .expect("error while running Little Fun");

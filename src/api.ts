@@ -13,6 +13,7 @@ import type {
   SyncStatusView,
   TodayBoard,
   IdeaTag,
+  NoteNode,
   WorkLog,
 } from "./types";
 
@@ -152,4 +153,18 @@ export const api = {
   syncSetDisplayName: (displayName: string) =>
     invoke<SyncStatusView>("sync_set_display_name", { displayName }),
   syncNow: () => invoke<SyncResultView>("sync_now"),
+  listNotes: () => invoke<NoteNode[]>("list_note_nodes"),
+  createNote: (kind: "folder" | "note", parentId: number | null, title: string) =>
+    invoke<NoteNode>("create_note_node", { kind, parentId, title }),
+  saveNote: (id: number, title: string, body: string) =>
+    invoke<NoteNode>("save_note_node", { id, title, body }),
+  renameNote: (id: number, title: string) =>
+    invoke<NoteNode>("rename_note_node", { id, title }),
+  setNoteStarred: (id: number, starred: boolean) =>
+    invoke<NoteNode>("set_note_starred", { id, starred }),
+  setNotePinned: (id: number, pinned: boolean) =>
+    invoke<NoteNode>("set_note_pinned", { id, pinned }),
+  moveNote: (id: number, parentId: number | null) =>
+    invoke<NoteNode>("move_note_node", { id, parentId }),
+  deleteNote: (id: number) => invoke<void>("delete_note_node", { id }),
 };

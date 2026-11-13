@@ -1,3 +1,16 @@
+export type NoteNode = {
+  id: number;
+  parentId: number | null;
+  kind: "folder" | "note";
+  title: string;
+  body: string;
+  starred: boolean;
+  pinned: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Project = {
   id: number;
   name: string;

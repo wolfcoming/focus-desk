@@ -815,3 +815,77 @@ pub async fn sync_now(app: AppHandle, state: State<'_, AppData>) -> Result<crate
     Ok(result)
 }
 
+#[tauri::command]
+pub fn list_note_nodes(state: State<'_, AppData>) -> Result<Vec<crate::notes::NoteNode>, String> {
+    let conn = connection(&state)?;
+    crate::notes::list_notes(&conn)
+}
+
+#[tauri::command]
+pub fn create_note_node(
+    state: State<'_, AppData>,
+    kind: String,
+    parent_id: Option<i64>,
+    title: String,
+) -> Result<crate::notes::NoteNode, String> {
+    let conn = connection(&state)?;
+    crate::notes::create_note_node(&conn, &kind, parent_id, &title)
+}
+
+#[tauri::command]
+pub fn save_note_node(
+    state: State<'_, AppData>,
+    id: i64,
+    title: String,
+    body: String,
+) -> Result<crate::notes::NoteNode, String> {
+    let conn = connection(&state)?;
+    crate::notes::save_note(&conn, id, &title, &body)
+}
+
+#[tauri::command]
+pub fn rename_note_node(
+    state: State<'_, AppData>,
+    id: i64,
+    title: String,
+) -> Result<crate::notes::NoteNode, String> {
+    let conn = connection(&state)?;
+    crate::notes::rename_note(&conn, id, &title)
+}
+
+#[tauri::command]
+pub fn set_note_starred(
+    state: State<'_, AppData>,
+    id: i64,
+    starred: bool,
+) -> Result<crate::notes::NoteNode, String> {
+    let conn = connection(&state)?;
+    crate::notes::set_starred(&conn, id, starred)
+}
+
+#[tauri::command]
+pub fn set_note_pinned(
+    state: State<'_, AppData>,
+    id: i64,
+    pinned: bool,
+) -> Result<crate::notes::NoteNode, String> {
+    let conn = connection(&state)?;
+    crate::notes::set_pinned(&conn, id, pinned)
+}
+
+#[tauri::command]
+pub fn move_note_node(
+    state: State<'_, AppData>,
+    id: i64,
+    parent_id: Option<i64>,
+) -> Result<crate::notes::NoteNode, String> {
+    let conn = connection(&state)?;
+    crate::notes::move_note(&conn, id, parent_id)
+}
+
+#[tauri::command]
+pub fn delete_note_node(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+    let conn = connection(&state)?;
+    crate::notes::delete_note(&conn, id)
+}
+

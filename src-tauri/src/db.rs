@@ -400,6 +400,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
          );",
     )
     .map_err(|err| err.to_string())?;
+    crate::notes::ensure_schema(conn)?;
     Ok(())
 }
 
@@ -894,8 +895,8 @@ pub fn create_subproject(conn: &Connection, input: &NewSubproject) -> Result<Sub
     let description = input.description.trim().to_string();
     let sort_order = next_sub_sort_order(&tx, input.project_id)?;
     tx.execute(
-        "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order, modules)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10, '[]')",
         params![input.project_id, name, description, due, status, stamp, kind, progress, progress_percent, sort_order],
     )
     .map_err(|err| err.to_string())?;
@@ -1866,8 +1867,8 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
         }
         let sort_order = next_sub_sort_order(&tx, project_id)?;
         tx.execute(
-            "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order)
-             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5, ?5, 'regular', 'doing', NULL, ?6)",
+            "INSERT INTO subprojects (project_id, name, description, target_date, status, last_touched_at, created_at, updated_at, kind, progress, progress_percent, sort_order, modules)
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5, ?5, 'regular', 'doing', NULL, ?6, '[]')",
             params![project_id, prepared.title, prepared.notes, prepared.due_at, stamp, sort_order],
         )
         .map_err(|err| err.to_string())?;
@@ -3727,6 +3728,7 @@ mod tests {
         assert_eq!(sub.progress_percent, Some(40));
         assert_eq!(sub.kind, "regular");
         assert_eq!(sub.quadrant.as_deref(), Some("重要且紧急"));
+        assert!(sub.modules.is_empty());
         let described = update_subproject(&conn, sub.id, "报价", "客户书面确认后发出").unwrap();
         assert_eq!(described.description, "客户书面确认后发出");
         let dated = set_subproject_due(&conn, sub.id, Some("2099-12-31T18:00")).unwrap();
@@ -3769,6 +3771,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(periodic.kind, "periodic");
+        assert!(periodic.modules.is_empty());
         assert_eq!(periodic.repeat_days.as_deref(), Some("1,2,3,4,5"));
         assert_eq!(periodic.remind_at.as_deref(), Some("09:00"));
     }

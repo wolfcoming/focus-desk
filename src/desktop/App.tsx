@@ -4,13 +4,15 @@ import { Auth } from "../Auth";
 import { api, message } from "../api";
 import { Settings } from "../Settings";
 import { ProjectOverlays, Projects } from "../Projects";
+import { Notes } from "../Notes";
 import { Today } from "../Today";
 import { Todos } from "../Todos";
 import type { Project } from "../types";
+import { ThemeToggle } from "../ThemeToggle";
 import { ErrorText, showToast } from "../widgets";
 import { fetchRailQuote, localQuoteOfDay, type Quote } from "../quotes";
 
-type Page = "today" | "todos" | "projects" | "settings" | "auth";
+type Page = "today" | "todos" | "projects" | "notes" | "settings" | "auth";
 
 function SyncIcon() {
   return (
@@ -159,6 +161,7 @@ export function DesktopApp() {
             <div className="nav-label">日常</div>
             {navButton("today", "今天")}
             {navButton("todos", "待办")}
+            {navButton("notes", "笔记")}
           </div>
 
           <div className="nav-divider" role="separator" aria-hidden />
@@ -194,6 +197,7 @@ export function DesktopApp() {
 
           <div className="nav-group nav-group-footer">
             <div className="nav-label">其他</div>
+            <ThemeToggle />
             {navButton("settings", "设置")}
           </div>
         </nav>
@@ -202,7 +206,7 @@ export function DesktopApp() {
           {quote.from ? <figcaption>{quote.from}</figcaption> : null}
         </figure>
       </aside>
-      <main className="main">
+      <main className={page === "notes" ? "main main-notes" : "main"}>
         <ErrorText text={error} />
         {page === "today" && <Today revision={revision} onOpen={openProject} onOpenTodos={() => setPage("todos")} />}
         {page === "todos" && <Todos revision={revision} onOpen={openProject} />}
@@ -224,6 +228,7 @@ export function DesktopApp() {
           onCreated={(project) => { setProjectId(project.id); setPage("projects"); setCreateProject(false); }}
           onDeleted={(id) => { setProjectId((current) => current === id ? null : current); setDeleteProject(null); }}
         />
+        {page === "notes" && <Notes />}
         {page === "settings" && (
           <Settings revision={revision} onRequestAuth={() => setPage("auth")} />
         )}

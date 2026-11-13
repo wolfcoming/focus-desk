@@ -1883,6 +1883,10 @@ export function Projects({
             return null;
           })}
 
+          {openedModules.length === 0 && (
+            <p className="module-empty-hint">点击下方添加模块，来定制化您的任务面板～</p>
+          )}
+
           {availableModules.length > 0 && (
             <div
               className="module-add-bar"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, message } from "../api";
+import { ThemeToggle } from "../ThemeToggle";
 import { showToast } from "../widgets";
 
 export function More({
@@ -85,6 +86,7 @@ export function More({
             <span className="android-list-sub">把本地改动与云端互相更新</span>
           </button>
         )}
+        <ThemeToggle variant="row" />
         <button
           type="button"
           className="android-list-item"

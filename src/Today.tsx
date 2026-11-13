@@ -58,6 +58,24 @@ export function Today({
     void load();
   }, [revision]);
 
+  useEffect(() => {
+    if (mobile || pickerSlot == null) return;
+    function onPointer(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".plate-pick-wrap")) return;
+      setPickerSlot(null);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setPickerSlot(null);
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [mobile, pickerSlot]);
+
   async function run(action: () => Promise<unknown>) {
     try {
       await action();
@@ -114,14 +132,6 @@ export function Today({
     setReplaceIndex(null);
   }
 
-  function candidateLabel(entry: Item) {
-    return [
-      entry.kind === "todo" ? "待办" : "任务",
-      entry.subprojectName,
-      entry.title,
-    ].filter(Boolean).join(" · ");
-  }
-
   function slotPicker(index: number, placeholder: string, ariaLabel: string) {
     if (mobile) {
       return (
@@ -135,24 +145,42 @@ export function Today({
         </button>
       );
     }
+    const open = pickerSlot === index;
     return (
-      <select
-        className="plate-pick"
-        value=""
-        onChange={(event) => {
-          const id = Number(event.target.value);
-          if (!id) return;
-          placeInSlot(index, id);
-        }}
-        aria-label={ariaLabel}
-      >
-        <option value="">{placeholder}</option>
-        {available.map((entry) => (
-          <option key={entry.id} value={entry.id}>
-            {candidateLabel(entry)}
-          </option>
-        ))}
-      </select>
+      <div className="plate-pick-wrap">
+        <button
+          type="button"
+          className={open ? "plate-pick is-open" : "plate-pick"}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-label={ariaLabel}
+          onClick={() => setPickerSlot((current) => current === index ? null : index)}
+        >
+          <span>{placeholder}</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10.2 12 15l5-4.8" /></svg>
+        </button>
+        {open ? (
+          <div className="plate-pick-menu" role="listbox" aria-label={ariaLabel}>
+            {available.length === 0 ? (
+              <p className="plate-pick-empty">暂无可选。先去待办或项目加一条。</p>
+            ) : available.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="option"
+                className="plate-pick-item"
+                onClick={() => placeInSlot(index, entry.id)}
+              >
+                <strong>{entry.title}</strong>
+                <span>
+                  {entry.kind === "todo" ? "待办" : "任务"}
+                  {entry.subprojectName ? ` · ${entry.subprojectName}` : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
     );
   }
 
@@ -234,7 +262,7 @@ export function Today({
                 {replacing && !mobile ? (
                   <div className="plate-replace">
                     {slotPicker(index, "换上新的一件…", done ? "挑选一件替换已完成的槽位" : "挑选一件替换当前槽位")}
-                    <button type="button" className="quiet" onClick={() => setReplaceIndex(null)}>
+                    <button type="button" className="quiet" onClick={() => { setReplaceIndex(null); setPickerSlot(null); }}>
                       取消
                     </button>
                   </div>
@@ -242,7 +270,13 @@ export function Today({
                   <button
                     type="button"
                     className="plate-continue"
-                    onClick={() => (mobile ? openPicker(index, true) : setReplaceIndex(index))}
+                    onClick={() => {
+                      if (mobile) openPicker(index, true);
+                      else {
+                        setReplaceIndex(index);
+                        setPickerSlot(index);
+                      }
+                    }}
                   >
                     继续挑战
                   </button>
@@ -264,7 +298,13 @@ export function Today({
                     <button
                       type="button"
                       className="quiet"
-                      onClick={() => (mobile ? openPicker(index, true) : setReplaceIndex(index))}
+                      onClick={() => {
+                        if (mobile) openPicker(index, true);
+                        else {
+                          setReplaceIndex(index);
+                          setPickerSlot(index);
+                        }
+                      }}
                     >
                       替换
                     </button>
