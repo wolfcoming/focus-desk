@@ -1,0 +1,14 @@
+---
+description: After every code change, commit and push to remote
+alwaysApply: true
+---
+
+# Sync every change to remote
+
+Whenever you finish modifying project files in this repo:
+
+1. Commit the relevant changes (skip secrets, binaries like `*.apk`, and temp scripts unless the user asks).
+2. Push to the tracked remote branch immediately (`git push -u origin HEAD` if needed).
+3. If push fails (network), retry once or twice; report clearly if it still fails and that the commit is local-only.
+
+Do this without waiting for a separate "commit/push" request—code changes in a task imply sync to remote.

@@ -1232,7 +1232,7 @@ fn apply_item(conn: &Connection, change: &SyncChangeIn) -> Result<ApplyOutcome, 
     let kind = text(&change.payload, "kind");
     let existing_id = db::sync_live_local_id(conn, "items", &change.client_id)?;
     let (project_id, subproject_id) = retain_work_item_parents(conn, &kind, existing_id, project_id, subproject_id)?;
-    if project_id.is_none() && matches!(kind.as_str(), "task" | "daily" | "waiting") {
+    if project_id.is_none() && matches!(kind, "task" | "daily" | "waiting") {
         // The parent project is gone. Drop the leftover so it cannot sit in 今日三件 or reminders.
         if let Some(local_id) = existing_id {
             db::delete_item_rows(conn, local_id)?;
