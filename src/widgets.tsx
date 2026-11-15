@@ -656,8 +656,11 @@ export function ToastHost() {
       const detail = (event as CustomEvent<ToastPayload>).detail;
       if (!detail?.message?.trim()) return;
       const id = Date.now();
-      setToast({ id, message: detail.message.trim(), kind: detail.kind ?? "ok" });
+      const kind = detail.kind ?? "ok";
+      setToast({ id, message: detail.message.trim(), kind });
       window.clearTimeout(hideTimer);
+      // Errors stay until dismissed; success toasts still auto-hide.
+      if (kind === "error") return;
       hideTimer = window.setTimeout(() => {
         setToast((current) => (current?.id === id ? null : current));
       }, 2800);
@@ -671,7 +674,13 @@ export function ToastHost() {
 
   if (!toast) return null;
   return (
-    <div className={`desk-toast desk-toast-${toast.kind}`} role="status" aria-live="polite">
+    <div
+      className={`desk-toast desk-toast-${toast.kind}${toast.kind === "error" ? " is-sticky" : ""}`}
+      role="status"
+      aria-live="polite"
+      onClick={() => setToast(null)}
+      title={toast.kind === "error" ? "点击关闭" : undefined}
+    >
       {toast.message}
     </div>
   );

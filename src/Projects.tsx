@@ -902,7 +902,14 @@ export function Projects({
   }
 
   function renderTodoList(items: Item[], emptyText: string) {
-    if (items.length === 0) return <Empty text={emptyText} />;
+    if (items.length === 0) {
+      return (
+        <p className="empty todo-empty">
+          <span className="todo-empty-mark" aria-hidden="true" />
+          <span>{emptyText}</span>
+        </p>
+      );
+    }
     return (
       <div className="list">
         {items.map((item) => {
@@ -1195,7 +1202,6 @@ export function Projects({
                         await api.setSubprojectDue(target.id, nextDue);
                       }
                     }
-                    setEditingInfo(false);
                   });
                 }}
               >
@@ -1685,7 +1691,6 @@ export function Projects({
                           onClick={() => {
                             void run(async () => {
                               await api.setSubprojectNotes(opened.id, notesDraft);
-                              setEditingNotes(false);
                             });
                           }}
                         >
@@ -1864,7 +1869,6 @@ export function Projects({
                           onClick={() => {
                             void run(async () => {
                               await api.setSubprojectRetrospect(opened.id, retrospectDraft);
-                              setEditingRetrospect(false);
                             });
                           }}
                         >

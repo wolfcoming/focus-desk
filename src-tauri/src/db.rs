@@ -308,6 +308,25 @@ CREATE TABLE IF NOT EXISTS reminder_state (
 );
 "#;
 
+/// Task, daily, and waiting rows whose project row is gone. Safe to delete.
+const ORPHAN_WORK_ITEM: &str = "
+i.kind IN ('task', 'daily', 'waiting')
+AND (
+  i.project_id IS NULL
+  OR NOT EXISTS (SELECT 1 FROM projects p2 WHERE p2.id = i.project_id)
+  OR (
+    i.subproject_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM subprojects s2 WHERE s2.id = i.subproject_id)
+  )
+  OR (i.kind = 'daily' AND i.subproject_id IS NULL)
+)";
+
+/// Archived projects stay in the database, but they are not on the board or the reminder clock.
+const SHELVED_WORK_ITEM: &str = "
+i.kind IN ('task', 'daily', 'waiting')
+AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.id = i.project_id AND p2.status = 'archived')
+";
+
 const ITEM_SELECT: &str = "
 SELECT i.id, i.kind, i.title, i.notes, i.project_id, i.subproject_id,
        i.important, i.urgent, i.due_at, i.estimate_min, i.status,
@@ -401,6 +420,31 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|err| err.to_string())?;
     crate::notes::ensure_schema(conn)?;
+    ensure_column(conn, "work_logs", "updated_at", "TEXT")?;
+    ensure_column(conn, "idea_tags", "updated_at", "TEXT")?;
+    ensure_column(conn, "subproject_attachments", "updated_at", "TEXT")?;
+    ensure_column(conn, "daily_marks", "updated_at", "TEXT")?;
+    conn.execute(
+        "UPDATE work_logs SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "UPDATE idea_tags SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "UPDATE subproject_attachments SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "UPDATE daily_marks SET updated_at = day || 'T12:00:00Z' WHERE updated_at IS NULL OR updated_at = ''",
+        [],
+    )
+    .map_err(|err| err.to_string())?;
+    purge_unreachable_work_items(conn)?;
     Ok(())
 }
 
@@ -1095,8 +1139,8 @@ fn insert_work_log(conn: &Connection, subproject_id: i64, body: &str, kind: &str
         .map_err(|_| "找不到这个子任务".to_string())?;
     let stamp = timeutil::now_iso();
     conn.execute(
-        "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
         params![subproject_id, body, progress, percent, kind, stamp],
     )
     .map_err(|err| err.to_string())?;
@@ -1110,8 +1154,12 @@ pub fn update_work_log(conn: &Connection, id: i64, body: &str) -> Result<WorkLog
     if body.is_empty() {
         return Err("写一下内容".into());
     }
+    let stamp = timeutil::now_iso();
     let changed = conn
-        .execute("UPDATE work_logs SET body = ?2 WHERE id = ?1", params![id, body])
+        .execute(
+            "UPDATE work_logs SET body = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, body, stamp],
+        )
         .map_err(|err| err.to_string())?;
     if changed != 1 {
         return Err("找不到这条记录".into());
@@ -1120,12 +1168,17 @@ pub fn update_work_log(conn: &Connection, id: i64, body: &str) -> Result<WorkLog
 }
 
 pub fn delete_work_log(conn: &Connection, id: i64) -> Result<(), String> {
-    let changed = conn
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let stamp = timeutil::now_iso();
+    sync_tombstone_existing(&tx, "work_logs", id, &stamp)?;
+    sync_unbind_local(&tx, "work_logs", id)?;
+    let changed = tx
         .execute("DELETE FROM work_logs WHERE id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     if changed != 1 {
         return Err("找不到这条记录".into());
     }
+    tx.commit().map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -1222,8 +1275,8 @@ pub fn add_idea_tag(
     let z_index = next_idea_z(conn, subproject_id)?;
     let stamp = timeutil::now_iso();
     conn.execute(
-        "INSERT INTO idea_tags (subproject_id, body, color, sort_order, pos_x, pos_y, z_index, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO idea_tags (subproject_id, body, color, sort_order, pos_x, pos_y, z_index, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         params![
             subproject_id,
             body,
@@ -1242,10 +1295,11 @@ pub fn add_idea_tag(
 pub fn update_idea_tag(conn: &Connection, id: i64, body: &str, color: &str) -> Result<IdeaTag, String> {
     let body = body.trim();
     let color = normalize_idea_color(color);
+    let stamp = timeutil::now_iso();
     let changed = conn
         .execute(
-            "UPDATE idea_tags SET body = ?2, color = ?3 WHERE id = ?1",
-            params![id, body, color],
+            "UPDATE idea_tags SET body = ?2, color = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, body, color, stamp],
         )
         .map_err(|err| err.to_string())?;
     if changed != 1 {
@@ -1263,10 +1317,11 @@ pub fn move_idea_tag(conn: &Connection, id: i64, pos_x: f64, pos_y: f64) -> Resu
         )
         .map_err(|_| "找不到这张灵感标签".to_string())?;
     let z_index = next_idea_z(conn, subproject_id)?;
+    let stamp = timeutil::now_iso();
     let changed = conn
         .execute(
-            "UPDATE idea_tags SET pos_x = ?2, pos_y = ?3, z_index = ?4 WHERE id = ?1",
-            params![id, clamp_idea_pos(pos_x), clamp_idea_pos(pos_y), z_index],
+            "UPDATE idea_tags SET pos_x = ?2, pos_y = ?3, z_index = ?4, updated_at = ?5 WHERE id = ?1",
+            params![id, clamp_idea_pos(pos_x), clamp_idea_pos(pos_y), z_index, stamp],
         )
         .map_err(|err| err.to_string())?;
     if changed != 1 {
@@ -1276,12 +1331,17 @@ pub fn move_idea_tag(conn: &Connection, id: i64, pos_x: f64, pos_y: f64) -> Resu
 }
 
 pub fn delete_idea_tag(conn: &Connection, id: i64) -> Result<(), String> {
-    let changed = conn
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let stamp = timeutil::now_iso();
+    sync_tombstone_existing(&tx, "idea_tags", id, &stamp)?;
+    sync_unbind_local(&tx, "idea_tags", id)?;
+    let changed = tx
         .execute("DELETE FROM idea_tags WHERE id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     if changed != 1 {
         return Err("找不到这张灵感标签".into());
     }
+    tx.commit().map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -1524,8 +1584,8 @@ pub fn set_subproject_progress(
     let body = log.unwrap_or("").trim();
     if !body.is_empty() {
         tx.execute(
-            "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'work', ?5)",
+            "INSERT INTO work_logs (subproject_id, body, progress, progress_percent, kind, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'work', ?5, ?5)",
             params![id, body, progress, progress_percent, stamp],
         )
         .map_err(|err| err.to_string())?;
@@ -1603,6 +1663,15 @@ pub fn list_work_logs(conn: &Connection, project_id: Option<i64>) -> Result<Vec<
 
 fn purge_items(conn: &Connection, id_query: &str, id: i64, tombstone: bool) -> Result<(), String> {
     let run = |sql: String| conn.execute(&sql, params![id]).map(|_| ()).map_err(|err| err.to_string());
+    let days: Vec<String> = {
+        let mut stmt = conn
+            .prepare(&format!("SELECT DISTINCT day FROM today_slots WHERE item_id IN ({id_query})"))
+            .map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map(params![id], |row| row.get(0))
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())?
+    };
     run(format!("DELETE FROM today_slots WHERE item_id IN ({id_query})"))?;
     run(format!("DELETE FROM today_completions WHERE item_id IN ({id_query})"))?;
     run(format!("DELETE FROM daily_marks WHERE item_id IN ({id_query})"))?;
@@ -1616,12 +1685,38 @@ fn purge_items(conn: &Connection, id_query: &str, id: i64, tombstone: bool) -> R
     run(format!(
         "DELETE FROM sync_ids WHERE collection = 'items' AND local_id IN ({id_query})"
     ))?;
-    run(format!("DELETE FROM items WHERE id IN ({id_query})"))
+    run(format!("DELETE FROM items WHERE id IN ({id_query})"))?;
+    let stamp = timeutil::now_iso();
+    for day in days {
+        set_setting(conn, &format!("sync_today_slots_at:{day}"), &stamp)?;
+    }
+    Ok(())
+}
+
+/// Drop task/daily/waiting rows whose project is gone. They no longer appear in the
+/// project, but they were still eligible for 今日三件 and reminders.
+pub fn purge_unreachable_work_items(conn: &Connection) -> Result<(), String> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT i.id FROM items i WHERE {ORPHAN_WORK_ITEM}"
+            ))
+            .map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())?
+    };
+    for id in ids {
+        purge_items(conn, "SELECT ?1", id, false)?;
+    }
+    Ok(())
 }
 
 /// Cascade-delete a subproject without opening a nested transaction (safe inside sync apply).
 pub fn delete_subproject_rows(conn: &Connection, id: i64) -> Result<(), String> {
-    delete_subproject_rows_inner(conn, id, false)
+    // Sync apply must tombstone the child items so the next push deletes them on the server.
+    delete_subproject_rows_inner(conn, id, true)
 }
 
 fn delete_subproject_rows_inner(conn: &Connection, id: i64, tombstone: bool) -> Result<(), String> {
@@ -1695,7 +1790,7 @@ pub fn delete_subproject(conn: &Connection, id: i64) -> Result<(), String> {
 
 /// Cascade-delete a project without opening a nested transaction (safe inside sync apply).
 pub fn delete_project_rows(conn: &Connection, id: i64) -> Result<(), String> {
-    delete_project_rows_inner(conn, id, false)
+    delete_project_rows_inner(conn, id, true)
 }
 
 fn delete_project_rows_inner(conn: &Connection, id: i64, tombstone: bool) -> Result<(), String> {
@@ -1930,7 +2025,9 @@ pub fn save_item(conn: &Connection, draft: &ItemDraft) -> Result<Item, String> {
 }
 
 pub fn list_items(conn: &Connection, kind: Option<&str>) -> Result<Vec<Item>, String> {
-    let sql = format!("{ITEM_SELECT} WHERE (?1 IS NULL OR i.kind = ?1) AND i.status != 'dropped' ORDER BY i.id DESC");
+    let sql = format!(
+        "{ITEM_SELECT} WHERE (?1 IS NULL OR i.kind = ?1) AND i.status != 'dropped' AND NOT ({ORPHAN_WORK_ITEM}) AND NOT ({SHELVED_WORK_ITEM}) ORDER BY i.id DESC"
+    );
     let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
     let rows = stmt
         .query_map(params![kind], map_item)
@@ -2007,9 +2104,9 @@ pub fn set_todo_done(conn: &Connection, id: i64, done: bool) -> Result<Item, Str
 pub fn complete_daily(conn: &Connection, id: i64) -> Result<Item, String> {
     let day = timeutil::today_key(now());
     conn.execute(
-        "INSERT INTO daily_marks (item_id, day, state) VALUES (?1, ?2, 'done')
-         ON CONFLICT(item_id, day) DO UPDATE SET state = 'done'",
-        params![id, day],
+        "INSERT INTO daily_marks (item_id, day, state, updated_at) VALUES (?1, ?2, 'done', ?3)
+         ON CONFLICT(item_id, day) DO UPDATE SET state = 'done', updated_at = excluded.updated_at",
+        params![id, day, timeutil::now_iso()],
     )
     .map_err(|err| err.to_string())?;
     snooze_item(conn, id, 12 * 60)?;
@@ -2083,6 +2180,9 @@ pub fn set_today(conn: &Connection, ids: &[i64]) -> Result<(), String> {
         if !matches!(item.kind.as_str(), "task" | "todo") {
             return Err("今日三件只能是任务或待办".into());
         }
+        if item.kind == "task" && !work_item_reachable(conn, &item)? {
+            return Err("这条任务已经不在项目里".into());
+        }
         let keep_done = item.status == "done" && current.contains(id);
         let fresh_open = matches!(item.status.as_str(), "open" | "doing");
         if !keep_done && !fresh_open {
@@ -2106,7 +2206,7 @@ pub fn today_board(conn: &Connection) -> Result<TodayBoard, String> {
         .prepare(&format!(
             "{ITEM_SELECT}
              JOIN today_slots t ON t.item_id = i.id
-             WHERE t.day = ?1 AND i.status != 'dropped'
+             WHERE t.day = ?1 AND i.status != 'dropped' AND NOT ({ORPHAN_WORK_ITEM}) AND NOT ({SHELVED_WORK_ITEM})
              ORDER BY t.position"
         ))
         .map_err(|err| err.to_string())?;
@@ -2913,9 +3013,39 @@ pub fn snooze_subproject(conn: &Connection, id: i64, minutes: i64) -> Result<(),
     Ok(())
 }
 
+fn work_item_reachable(conn: &Connection, item: &Item) -> Result<bool, String> {
+    let Some(project_id) = item.project_id else {
+        return Ok(false);
+    };
+    let project_open: Option<String> = conn
+        .query_row(
+            "SELECT status FROM projects WHERE id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?;
+    if project_open.as_deref().map(|status| status == "archived").unwrap_or(true) {
+        return Ok(false);
+    }
+    if item.kind == "daily" && item.subproject_id.is_none() {
+        return Ok(false);
+    }
+    if let Some(sub_id) = item.subproject_id {
+        let found: Option<i64> = conn
+            .query_row("SELECT id FROM subprojects WHERE id = ?1", params![sub_id], |row| row.get(0))
+            .optional()
+            .map_err(|err| err.to_string())?;
+        if found.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub fn work_items(conn: &Connection) -> Result<Vec<Item>, String> {
     let sql = format!(
-        "{ITEM_SELECT} WHERE i.kind IN ('task','daily','waiting') AND i.status IN ('open','doing') ORDER BY i.id DESC"
+        "{ITEM_SELECT} WHERE i.kind IN ('task','daily','waiting') AND i.status IN ('open','doing') AND NOT ({ORPHAN_WORK_ITEM}) AND NOT ({SHELVED_WORK_ITEM}) ORDER BY i.id DESC"
     );
     let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
     let rows = stmt.query_map([], map_item).map_err(|err| err.to_string())?;
@@ -3437,8 +3567,8 @@ pub fn add_subproject_attachment(
     let title = if title.is_empty() { target } else { title };
     let stamp = timeutil::now_iso();
     conn.execute(
-        "INSERT INTO subproject_attachments (subproject_id, title, target, created_at)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO subproject_attachments (subproject_id, title, target, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
         params![subproject_id, title, target, stamp],
     )
     .map_err(|err| err.to_string())?;
@@ -3452,12 +3582,17 @@ pub fn add_subproject_attachment(
 }
 
 pub fn delete_subproject_attachment(conn: &Connection, id: i64) -> Result<(), String> {
-    let changed = conn
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    let stamp = timeutil::now_iso();
+    sync_tombstone_existing(&tx, "subproject_attachments", id, &stamp)?;
+    sync_unbind_local(&tx, "subproject_attachments", id)?;
+    let changed = tx
         .execute("DELETE FROM subproject_attachments WHERE id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     if changed != 1 {
         return Err("找不到这个附件".into());
     }
+    tx.commit().map_err(|err| err.to_string())?;
     Ok(())
 }
 

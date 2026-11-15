@@ -2,6 +2,7 @@ package com.focusdesk.sync.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.focusdesk.sync.domain.SyncRecord;
 import com.focusdesk.sync.repo.SyncRecordRepository;
@@ -104,9 +105,17 @@ public class SyncService {
     boolean deleted = record.getDeletedAt() != null;
     JsonNode payload;
     try {
-      payload = deleted ? objectMapper.createObjectNode() : objectMapper.readTree(record.getPayload());
+      payload = record.getPayload() == null || record.getPayload().isBlank()
+          ? objectMapper.createObjectNode()
+          : objectMapper.readTree(record.getPayload());
     } catch (JsonProcessingException ex) {
       payload = objectMapper.createObjectNode();
+    }
+    if (!payload.isObject()) {
+      payload = objectMapper.createObjectNode();
+    }
+    if (deleted && (payload.get("updatedAt") == null || payload.get("updatedAt").isNull())) {
+      ((ObjectNode) payload).put("updatedAt", record.getUpdatedAt().toString());
     }
     return new SyncChange(
         record.getCollection(),

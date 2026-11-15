@@ -497,10 +497,31 @@ fn autostart_enabled(app: &AppHandle) -> bool {
 fn apply_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(desktop)]
     {
+        let currently = app.autolaunch().is_enabled().unwrap_or(false);
+        if currently == enabled {
+            return Ok(());
+        }
         if enabled {
-            app.autolaunch().enable().map_err(|err| err.to_string())
+            app.autolaunch()
+                .enable()
+                .map_err(|err| format!("无法开启开机启动：{err}"))
         } else {
-            app.autolaunch().disable().map_err(|err| err.to_string())
+            match app.autolaunch().disable() {
+                Ok(()) => Ok(()),
+                Err(err) => {
+                    // Windows often returns "file not found" when the startup entry is already gone.
+                    let text = err.to_string();
+                    if text.contains("os error 2")
+                        || text.contains("找不到")
+                        || text.contains("not found")
+                        || text.contains("NotFound")
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("无法关闭开机启动：{text}"))
+                    }
+                }
+            }
         }
     }
     #[cfg(not(desktop))]
@@ -532,8 +553,8 @@ pub fn save_settings(app: AppHandle, state: State<'_, AppData>, input: SettingsI
             ai::set_api_key(&key)?;
         }
     }
-    apply_autostart(&app, input.autostart)?;
     db::set_setting(&conn, "auto_remind", if input.auto_remind { "1" } else { "0" })?;
+    apply_autostart(&app, input.autostart)?;
     get_settings(app, state)
 }
 
