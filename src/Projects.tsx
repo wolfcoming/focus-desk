@@ -265,6 +265,9 @@ export function Projects({
   onAskDelete,
   onRequestOpenSub,
   onRequestCloseSub,
+  openTodoId = null,
+  onRequestOpenTodo,
+  onRequestCloseTodo,
   chromeBack = true,
 }: {
   revision: number;
@@ -275,6 +278,9 @@ export function Projects({
   onAskDelete: (project: Project) => void;
   onRequestOpenSub?: (subId: number) => void;
   onRequestCloseSub?: () => void;
+  openTodoId?: number | null;
+  onRequestOpenTodo?: (id: number) => void;
+  onRequestCloseTodo?: () => void;
   chromeBack?: boolean;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -302,7 +308,9 @@ export function Projects({
   const [subForm, setSubForm] = useState(emptySubForm);
   const [doneOpen, setDoneOpen] = useState(false);
   const [todoDoneOpen, setTodoDoneOpen] = useState(true);
-  const [openTodoId, setOpenTodoId] = useState<number | null>(null);
+  const [internalOpenTodoId, setInternalOpenTodoId] = useState<number | null>(null);
+  const controlledTodo = onRequestOpenTodo != null;
+  const activeTodoId = controlledTodo ? (openTodoId ?? null) : internalOpenTodoId;
   const [todoDetail, setTodoDetail] = useState<TodoDetailForm | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [keyProgressOpen, setKeyProgressOpen] = useState(false);
@@ -356,18 +364,18 @@ export function Projects({
   }, [revision, selectedId]);
 
   useEffect(() => {
-    if (openTodoId == null) {
+    if (activeTodoId == null) {
       setTodoDetail(null);
       return;
     }
-    const currentTodo = todos.find((item) => item.id === openTodoId);
+    const currentTodo = todos.find((item) => item.id === activeTodoId);
     if (!currentTodo) {
-      setOpenTodoId(null);
+      if (!controlledTodo) setInternalOpenTodoId(null);
       setTodoDetail(null);
       return;
     }
     setTodoDetail(detailFromTodo(currentTodo));
-  }, [todos, openTodoId]);
+  }, [todos, activeTodoId, controlledTodo]);
 
   // 切项目 / 点侧栏回到项目总览时关掉子任务；不要在 focusSubId 被消费清空时误关详情
   useEffect(() => {
@@ -377,9 +385,11 @@ export function Projects({
   }, [selectedId, projectTick, controlledSub, focusSubId]);
 
   useEffect(() => {
-    setOpenTodoId(null);
-    setTodoDetail(null);
-  }, [selectedId, projectTick]);
+    if (!controlledTodo) {
+      setInternalOpenTodoId(null);
+      setTodoDetail(null);
+    }
+  }, [selectedId, projectTick, controlledTodo]);
 
   useEffect(() => {
     if (focusSubId == null) return;
@@ -442,8 +452,10 @@ export function Projects({
 
   function openSub(sub: Subproject) {
     setError("");
-    setOpenTodoId(null);
-    setTodoDetail(null);
+    if (!controlledTodo) {
+      setInternalOpenTodoId(null);
+      setTodoDetail(null);
+    }
     setLogsOpen(false);
     setPlacingIdea(null);
     setDraggingIdeaId(null);
@@ -878,7 +890,7 @@ export function Projects({
   const subTodos = opened
     ? todos.filter((item) => item.subprojectId === opened.id)
     : [];
-  const openedTodo = openTodoId != null ? todos.find((item) => item.id === openTodoId) ?? null : null;
+  const openedTodo = activeTodoId != null ? todos.find((item) => item.id === activeTodoId) ?? null : null;
   const todoDetailSubs = (() => {
     const id = Number(todoDetail?.projectId);
     if (!id) return [] as Subproject[];
@@ -953,24 +965,32 @@ export function Projects({
 
   function openTodoItem(item: Item) {
     setError("");
-    setOpenTodoId(item.id);
+    if (onRequestOpenTodo) {
+      onRequestOpenTodo(item.id);
+      return;
+    }
+    setInternalOpenTodoId(item.id);
     setTodoDetail(detailFromTodo(item));
   }
 
   function closeTodoItem() {
-    setOpenTodoId(null);
-    setTodoDetail(null);
     setError("");
+    if (onRequestCloseTodo) {
+      onRequestCloseTodo();
+      return;
+    }
+    setInternalOpenTodoId(null);
+    setTodoDetail(null);
   }
 
   async function saveTodoDetail() {
-    if (openTodoId == null || !todoDetail) return;
+    if (activeTodoId == null || !todoDetail) return;
     const nextTitle = todoDetail.title.trim();
     if (!nextTitle || busy) return;
     setBusy(true);
     try {
       await api.saveItem({
-        id: openTodoId,
+        id: activeTodoId,
         kind: "todo",
         title: nextTitle,
         notes: todoDetail.notes.trim(),
@@ -1319,7 +1339,7 @@ export function Projects({
           <section className="project-section">
             <div className="section-head">
               <h2>待办</h2>
-              <span className="section-count">{projectTodos.length}</span>
+              <span className="section-count">{projectTodos.filter((item) => item.status !== "done").length}</span>
             </div>
             {renderTodoList(projectTodos, "还没有挂在本项目的待办。")}
           </section>
@@ -1717,8 +1737,8 @@ export function Projects({
                 <section className="project-section module-section" key={moduleId}>
                   <div className="section-head">
                     <h2>灵感标签板</h2>
-                    {moduleHideButton("ideas")}
                     <span className="section-count">{ideaTags.length}</span>
+                    {moduleHideButton("ideas")}
                   </div>
                   <div className="idea-board-palette" role="group" aria-label="添加灵感标签">
                     {IDEA_TAG_COLORS.map((option) => (
@@ -1835,12 +1855,13 @@ export function Projects({
               );
             }
             if (moduleId === "todos") {
+              const openTodoCount = subTodos.filter((item) => item.status !== "done").length;
               return (
                 <section className="project-section module-section" key={moduleId}>
                   <div className="section-head">
                     <h2>待办</h2>
+                    <span className="section-count">{openTodoCount}</span>
                     {moduleHideButton("todos")}
-                    <span className="section-count">{subTodos.length}</span>
                   </div>
                   <form
                     className="todo-compose"
@@ -1960,8 +1981,8 @@ export function Projects({
                 <section className="project-section module-section" key={moduleId}>
                   <div className="section-head">
                     <h2>附件</h2>
-                    {moduleHideButton("attachments")}
                     <span className="section-count">{attachments.length}</span>
+                    {moduleHideButton("attachments")}
                     {!addingAttachment && (
                       <div className="section-tools">
                         <button

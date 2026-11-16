@@ -1,14 +1,12 @@
 ---
-description: After every code change, commit and push to remote
+description: Do not commit or push unless the user asks
 alwaysApply: true
 ---
 
-# Sync every change to remote
+# Commit and push only when asked
 
-Whenever you finish modifying project files in this repo:
+Do **not** commit or push after code changes by default.
 
-1. Commit the relevant changes (skip secrets, binaries like `*.apk`, and temp scripts unless the user asks).
-2. Push to the tracked remote branch immediately (`git push -u origin HEAD` if needed).
-3. If push fails (network), retry once or twice; report clearly if it still fails and that the commit is local-only.
+Only run `git commit` / `git push` when the user explicitly asks (e.g. 「提交」「推送」「commit」「push」).
 
-Do this without waiting for a separate "commit/push" request—code changes in a task imply sync to remote.
+When they do ask, skip secrets, binaries like `*.apk`, and temp scripts unless they specifically want those included.

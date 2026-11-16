@@ -783,6 +783,16 @@
   font-weight: 650;
 }
 
+.android-app .section-head .section-count {
+  order: 0;
+}
+
+.android-app .sub-detail .module-section .module-hide {
+  opacity: 0.85;
+  pointer-events: auto;
+  margin-left: auto;
+}
+
 .android-app .section-edit {
   min-height: 36px;
   padding: 6px 10px;

@@ -96,12 +96,25 @@ export function AndroidApp() {
   const nested = isNested(stack);
   const showTabs = !nested;
 
+  const projectCtx = (() => {
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+      const frame = stack[index];
+      if (frame.type === "sub") return { projectId: frame.projectId, subId: frame.subId };
+      if (frame.type === "project") return { projectId: frame.id, subId: null as number | null };
+    }
+    return null;
+  })();
   const projectId =
     top.type === "project" ? top.id
       : top.type === "sub" ? top.projectId
+        : top.type === "todo" ? projectCtx?.projectId ?? null
+          : null;
+  const openSubId =
+    top.type === "sub" ? top.subId
+      : top.type === "todo" ? projectCtx?.subId ?? null
         : null;
-  const openSubId = top.type === "sub" ? top.subId : null;
   const openTodoId = top.type === "todo" ? top.id : null;
+  const todoFromProject = top.type === "todo" && projectCtx != null;
 
   function writeHistory(next: Frame[], mode: "push" | "replace") {
     const state: NavState = { stack: next };
@@ -344,8 +357,11 @@ export function AndroidApp() {
 
   function openTodo(id: number) {
     setStack((current) => {
+      const last = current[current.length - 1];
+      if (last?.type === "todo" && last.id === id) return current;
       const onTodosRoot = current.length === 1 && current[0]?.type === "tab" && current[0].tab === "todos";
-      const next: Frame[] = onTodosRoot
+      const inProjectFlow = current.some((frame) => frame.type === "project" || frame.type === "sub");
+      const next: Frame[] = onTodosRoot || inProjectFlow
         ? [...current, { type: "todo", id }]
         : [
             { type: "tab", tab: "todos" },
@@ -372,7 +388,7 @@ export function AndroidApp() {
         {top.type === "tab" && top.tab === "today" && (
           <Today revision={revision} onOpen={openProject} onOpenTodos={() => goTab("todos")} />
         )}
-        {(top.type === "tab" && top.tab === "todos") || top.type === "todo" ? (
+        {(top.type === "tab" && top.tab === "todos") || (top.type === "todo" && !todoFromProject) ? (
           <Todos
             revision={revision}
             onOpen={openProject}
@@ -389,7 +405,7 @@ export function AndroidApp() {
             onCreate={() => setCreateProject(true)}
           />
         )}
-        {(top.type === "project" || top.type === "sub") && projectId != null && (
+        {(top.type === "project" || top.type === "sub" || todoFromProject) && projectId != null && (
           <Projects
             revision={revision}
             selectedId={projectId}
@@ -399,6 +415,9 @@ export function AndroidApp() {
             onAskDelete={setDeleteProject}
             onRequestOpenSub={(subId) => openSub(projectId, subId)}
             onRequestCloseSub={goBack}
+            openTodoId={openTodoId}
+            onRequestOpenTodo={openTodo}
+            onRequestCloseTodo={goBack}
             chromeBack={false}
           />
         )}
