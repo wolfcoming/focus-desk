@@ -327,6 +327,19 @@ i.kind IN ('task', 'daily', 'waiting')
 AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.id = i.project_id AND p2.status = 'archived')
 ";
 
+/// Reminder scan only watches work under an active project (and active subproject when linked).
+const INACTIVE_REMINDER_PARENT: &str = "
+i.kind IN ('task', 'daily', 'waiting')
+AND (
+  (i.project_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM projects p2 WHERE p2.id = i.project_id AND p2.status = 'active'
+  ))
+  OR (i.subproject_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM subprojects s2 WHERE s2.id = i.subproject_id AND s2.status = 'active'
+  ))
+)
+";
+
 const ITEM_SELECT: &str = "
 SELECT i.id, i.kind, i.title, i.notes, i.project_id, i.subproject_id,
        i.important, i.urgent, i.due_at, i.estimate_min, i.status,
@@ -879,6 +892,9 @@ pub fn set_project_status(
         .map_err(|err| err.to_string())?;
     }
     tx.commit().map_err(|err| err.to_string())?;
+    if matches!(status, "paused" | "archived" | "upcoming") {
+        clear_reminder_for_project(conn, id)?;
+    }
     get_project(conn, id)
 }
 
@@ -1060,6 +1076,9 @@ pub fn set_subproject_status(
         }
     }
     tx.commit().map_err(|err| err.to_string())?;
+    if status != "active" {
+        clear_reminder_for_subproject(conn, id)?;
+    }
     get_subproject(conn, id)
 }
 
@@ -1591,6 +1610,9 @@ pub fn set_subproject_progress(
         .map_err(|err| err.to_string())?;
     }
     tx.commit().map_err(|err| err.to_string())?;
+    if status != "active" {
+        clear_reminder_for_subproject(conn, id)?;
+    }
     get_subproject(conn, id)
 }
 
@@ -2053,6 +2075,7 @@ pub fn complete_task(conn: &Connection, id: i64) -> Result<Item, String> {
     )
     .map_err(|err| err.to_string())?;
     note_today_focus_completion(conn, id, &stamp)?;
+    clear_reminder_for_item(conn, id)?;
     if item.kind == "todo" {
         return get_item(conn, id);
     }
@@ -2110,6 +2133,7 @@ pub fn complete_daily(conn: &Connection, id: i64) -> Result<Item, String> {
     )
     .map_err(|err| err.to_string())?;
     snooze_item(conn, id, 12 * 60)?;
+    clear_reminder_for_item(conn, id)?;
     get_item(conn, id)
 }
 
@@ -2124,6 +2148,7 @@ pub fn drop_item(conn: &Connection, id: i64) -> Result<(), String> {
     if changed != 1 {
         return Err("找不到这条记录".into());
     }
+    clear_reminder_for_item(conn, id)?;
     Ok(())
 }
 
@@ -2992,6 +3017,39 @@ pub fn clear_reminder(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+pub fn clear_reminder_for_item(conn: &Connection, item_id: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM reminder_state WHERE id = 1 AND item_id = ?1",
+        params![item_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn clear_reminder_for_subproject(conn: &Connection, sub_id: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM reminder_state WHERE id = 1 AND (
+           subproject_id = ?1
+           OR item_id IN (SELECT id FROM items WHERE subproject_id = ?1)
+         )",
+        params![sub_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub fn clear_reminder_for_project(conn: &Connection, project_id: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM reminder_state WHERE id = 1 AND (
+           item_id IN (SELECT id FROM items WHERE project_id = ?1)
+           OR subproject_id IN (SELECT id FROM subprojects WHERE project_id = ?1)
+         )",
+        params![project_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 pub fn snooze_item(conn: &Connection, id: i64, minutes: i64) -> Result<(), String> {
     let until = timeutil::iso(timeutil::add_minutes(now(), minutes));
     let stamp = timeutil::now_iso();
@@ -3045,7 +3103,7 @@ fn work_item_reachable(conn: &Connection, item: &Item) -> Result<bool, String> {
 
 pub fn work_items(conn: &Connection) -> Result<Vec<Item>, String> {
     let sql = format!(
-        "{ITEM_SELECT} WHERE i.kind IN ('task','daily','waiting') AND i.status IN ('open','doing') AND NOT ({ORPHAN_WORK_ITEM}) AND NOT ({SHELVED_WORK_ITEM}) ORDER BY i.id DESC"
+        "{ITEM_SELECT} WHERE i.kind IN ('task','daily','waiting') AND i.status IN ('open','doing') AND NOT ({ORPHAN_WORK_ITEM}) AND NOT ({SHELVED_WORK_ITEM}) AND NOT ({INACTIVE_REMINDER_PARENT}) ORDER BY i.id DESC"
     );
     let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
     let rows = stmt.query_map([], map_item).map_err(|err| err.to_string())?;
@@ -3228,7 +3286,14 @@ pub fn resolve_stall(conn: &Connection, action: &str) -> Result<(), String> {
 
 pub fn active_subprojects_for_scan(conn: &Connection) -> Result<Vec<(i64, String, String, Option<String>)>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, name, last_touched_at, stall_snooze_until FROM subprojects WHERE status = 'active' AND COALESCE(kind, 'regular') != 'periodic'")
+        .prepare(
+            "SELECT s.id, s.name, s.last_touched_at, s.stall_snooze_until
+             FROM subprojects s
+             INNER JOIN projects p ON p.id = s.project_id
+             WHERE s.status = 'active'
+               AND p.status = 'active'
+               AND COALESCE(s.kind, 'regular') != 'periodic'",
+        )
         .map_err(|err| err.to_string())?;
     let rows = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))

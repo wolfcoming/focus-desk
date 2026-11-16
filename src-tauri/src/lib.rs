@@ -23,7 +23,7 @@ use tauri::Manager;
 #[cfg(desktop)]
 use tauri_plugin_autostart::MacosLauncher;
 
-use crate::commands::{present, AppData};
+use crate::commands::{apply_scan_outcome, present, AppData};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -67,8 +67,7 @@ pub fn run() {
                     .unwrap_or(true);
                 if enabled {
                     match schedule::scan(&scheduler_db) {
-                        Ok(Some(reminder)) => present(&scheduler_app, &reminder),
-                        Ok(None) => {}
+                        Ok(outcome) => apply_scan_outcome(&scheduler_app, outcome),
                         Err(err) => eprintln!("reminder: {err}"),
                     }
                 }
@@ -212,8 +211,8 @@ fn setup_desktop(app: &tauri::App, db_path: &std::path::Path) -> Result<(), Box<
             "show" => show_main(app),
             "quit" => app.exit(0),
             "check" => {
-                if let Ok(Some(reminder)) = schedule::scan(&tray_db) {
-                    present(app, &reminder);
+                if let Ok(outcome) = schedule::scan(&tray_db) {
+                    apply_scan_outcome(app, outcome);
                 }
             }
             _ => {}

@@ -23,6 +23,7 @@ export function Reminder() {
   useEffect(() => {
     void api.activeReminder().then(setReminder).catch((reason) => setError(message(reason)));
     let unlisten: (() => void) | undefined;
+    let unlistenClose: (() => void) | undefined;
     void listen<ReminderItem>("reminder://open", (event) => {
       setReminder(event.payload);
       setBusy(false);
@@ -32,7 +33,19 @@ export function Reminder() {
     }).then((fn) => {
       unlisten = fn;
     });
-    return () => unlisten?.();
+    void listen("reminder://close", () => {
+      setReminder(null);
+      setBusy(false);
+      setPostponeOpen(false);
+      setCustomAt("");
+      setError("");
+    }).then((fn) => {
+      unlistenClose = fn;
+    });
+    return () => {
+      unlisten?.();
+      unlistenClose?.();
+    };
   }, []);
 
   async function finish(action: () => Promise<unknown>) {

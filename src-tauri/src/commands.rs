@@ -71,6 +71,24 @@ pub fn present(app: &AppHandle, reminder: &ReminderView) {
     }
 }
 
+pub fn dismiss_reminder_window(app: &AppHandle) {
+    let _ = app.emit("reminder://close", ());
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = app_handle.get_webview_window("reminder") {
+            let _ = window.hide();
+        }
+    });
+}
+
+pub fn apply_scan_outcome(app: &AppHandle, outcome: schedule::ScanOutcome) {
+    match outcome {
+        schedule::ScanOutcome::Fire(reminder) => present(app, &reminder),
+        schedule::ScanOutcome::Idle => dismiss_reminder_window(app),
+        schedule::ScanOutcome::Unchanged => {}
+    }
+}
+
 #[tauri::command]
 pub fn list_projects(state: State<'_, AppData>) -> Result<Vec<db::Project>, String> {
     let conn = connection(&state)?;
@@ -96,12 +114,17 @@ pub fn update_project(
 
 #[tauri::command]
 pub fn set_project_status(
+    app: AppHandle,
     state: State<'_, AppData>,
     id: i64,
     status: String,
 ) -> Result<db::Project, String> {
     let conn = connection(&state)?;
-    db::set_project_status(&conn, id, &status)
+    let project = db::set_project_status(&conn, id, &status)?;
+    if db::load_reminder(&conn)?.is_none() {
+        dismiss_reminder_window(&app);
+    }
+    Ok(project)
 }
 
 #[tauri::command]
@@ -118,6 +141,7 @@ pub fn create_subproject(state: State<'_, AppData>, input: NewSubproject) -> Res
 
 #[tauri::command]
 pub fn set_subproject_progress(
+    app: AppHandle,
     state: State<'_, AppData>,
     id: i64,
     progress: String,
@@ -125,7 +149,11 @@ pub fn set_subproject_progress(
     log: Option<String>,
 ) -> Result<db::Subproject, String> {
     let conn = connection(&state)?;
-    db::set_subproject_progress(&conn, id, &progress, progress_percent, log.as_deref())
+    let sub = db::set_subproject_progress(&conn, id, &progress, progress_percent, log.as_deref())?;
+    if db::load_reminder(&conn)?.is_none() {
+        dismiss_reminder_window(&app);
+    }
+    Ok(sub)
 }
 
 #[tauri::command]
@@ -381,13 +409,18 @@ pub fn delete_idea_tag(state: State<'_, AppData>, id: i64) -> Result<(), String>
 
 #[tauri::command]
 pub fn set_subproject_status(
+    app: AppHandle,
     state: State<'_, AppData>,
     id: i64,
     status: String,
     pause_subproject_id: Option<i64>,
 ) -> Result<db::Subproject, String> {
     let conn = connection(&state)?;
-    db::set_subproject_status(&conn, id, &status, pause_subproject_id)
+    let sub = db::set_subproject_status(&conn, id, &status, pause_subproject_id)?;
+    if db::load_reminder(&conn)?.is_none() {
+        dismiss_reminder_window(&app);
+    }
+    Ok(sub)
 }
 
 #[tauri::command]
@@ -421,9 +454,13 @@ pub fn save_item(state: State<'_, AppData>, draft: ItemDraft) -> Result<Item, St
 }
 
 #[tauri::command]
-pub fn set_todo_done(state: State<'_, AppData>, id: i64, done: bool) -> Result<Item, String> {
+pub fn set_todo_done(app: AppHandle, state: State<'_, AppData>, id: i64, done: bool) -> Result<Item, String> {
     let conn = connection(&state)?;
-    db::set_todo_done(&conn, id, done)
+    let item = db::set_todo_done(&conn, id, done)?;
+    if db::load_reminder(&conn)?.is_none() {
+        dismiss_reminder_window(&app);
+    }
+    Ok(item)
 }
 
 #[tauri::command]
@@ -433,15 +470,23 @@ pub fn list_items(state: State<'_, AppData>, kind: Option<String>) -> Result<Vec
 }
 
 #[tauri::command]
-pub fn complete_item(state: State<'_, AppData>, id: i64) -> Result<Item, String> {
+pub fn complete_item(app: AppHandle, state: State<'_, AppData>, id: i64) -> Result<Item, String> {
     let conn = connection(&state)?;
-    db::complete_task(&conn, id)
+    let item = db::complete_task(&conn, id)?;
+    if db::load_reminder(&conn)?.is_none() {
+        dismiss_reminder_window(&app);
+    }
+    Ok(item)
 }
 
 #[tauri::command]
-pub fn drop_item(state: State<'_, AppData>, id: i64) -> Result<(), String> {
+pub fn drop_item(app: AppHandle, state: State<'_, AppData>, id: i64) -> Result<(), String> {
     let conn = connection(&state)?;
-    db::drop_item(&conn, id)
+    db::drop_item(&conn, id)?;
+    if db::load_reminder(&conn)?.is_none() {
+        dismiss_reminder_window(&app);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -560,8 +605,7 @@ pub fn save_settings(app: AppHandle, state: State<'_, AppData>, input: SettingsI
 
 #[tauri::command]
 pub fn active_reminder(state: State<'_, AppData>) -> Result<Option<ReminderView>, String> {
-    let conn = connection(&state)?;
-    db::load_reminder(&conn)
+    schedule::pending(&state.db_path)
 }
 
 #[tauri::command]
@@ -638,10 +682,13 @@ pub fn resolve_stall(app: AppHandle, state: State<'_, AppData>, action: String) 
 
 #[tauri::command]
 pub fn check_reminders(app: AppHandle, state: State<'_, AppData>) -> Result<Option<ReminderView>, String> {
-    let reminder = schedule::scan(&state.db_path)?;
-    if let Some(reminder) = &reminder {
-        present(&app, reminder);
-    }
+    let outcome = schedule::scan(&state.db_path)?;
+    let reminder = match &outcome {
+        schedule::ScanOutcome::Fire(reminder) => Some(reminder.clone()),
+        schedule::ScanOutcome::Unchanged => schedule::pending(&state.db_path)?,
+        schedule::ScanOutcome::Idle => None,
+    };
+    apply_scan_outcome(&app, outcome);
     Ok(reminder)
 }
 

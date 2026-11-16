@@ -15,7 +15,17 @@ struct Candidate {
     rank: u8,
 }
 
-pub fn scan(path: &Path) -> Result<Option<ReminderView>, String> {
+/// Result of a reminder scan pass.
+pub enum ScanOutcome {
+    /// No reminder should be showing.
+    Idle,
+    /// Keep the current reminder window as-is.
+    Unchanged,
+    /// Show / replace with this reminder.
+    Fire(ReminderView),
+}
+
+pub fn scan(path: &Path) -> Result<ScanOutcome, String> {
     let conn = db::open(path)?;
     scan_conn(&conn)
 }
@@ -31,10 +41,14 @@ pub fn pending(path: &Path) -> Result<Option<ReminderView>, String> {
             return Ok(None);
         }
     }
+    if !reminder_still_eligible(&conn, &reminder)? {
+        db::clear_reminder(&conn)?;
+        return Ok(None);
+    }
     Ok(Some(reminder))
 }
 
-pub fn scan_conn(conn: &rusqlite::Connection) -> Result<Option<ReminderView>, String> {
+pub fn scan_conn(conn: &rusqlite::Connection) -> Result<ScanOutcome, String> {
     let moment = now();
     let active = db::load_reminder(conn)?;
     let mut best: Option<Candidate> = None;
@@ -76,15 +90,26 @@ pub fn scan_conn(conn: &rusqlite::Connection) -> Result<Option<ReminderView>, St
         }
     }
 
-    let Some(candidate) = best else {
-        return Ok(None);
-    };
     if let Some(active) = &active {
-        let same = active.class == candidate.class
-            && active.item_id == candidate.item_id
-            && active.subproject_id == candidate.subproject_id;
+        if !candidate_matches(best.as_ref(), active)
+            && !reminder_still_eligible(conn, active)?
+        {
+            db::clear_reminder(conn)?;
+        }
+    }
+
+    let active = db::load_reminder(conn)?;
+    let Some(candidate) = best else {
+        if active.is_some() {
+            db::clear_reminder(conn)?;
+        }
+        return Ok(ScanOutcome::Idle);
+    };
+
+    if let Some(active) = &active {
+        let same = candidate_matches(Some(&candidate), active);
         if same || priority(candidate.class) <= priority(active.class) {
-            return Ok(None);
+            return Ok(ScanOutcome::Unchanged);
         }
     }
 
@@ -97,7 +122,53 @@ pub fn scan_conn(conn: &rusqlite::Connection) -> Result<Option<ReminderView>, St
         fired_at: timeutil::now_iso(),
     };
     db::save_reminder(conn, &reminder)?;
-    Ok(Some(reminder))
+    Ok(ScanOutcome::Fire(reminder))
+}
+
+fn candidate_matches(candidate: Option<&Candidate>, reminder: &ReminderView) -> bool {
+    candidate
+        .map(|current| {
+            current.class == reminder.class
+                && current.item_id == reminder.item_id
+                && current.subproject_id == reminder.subproject_id
+        })
+        .unwrap_or(false)
+}
+
+fn reminder_still_eligible(
+    conn: &rusqlite::Connection,
+    reminder: &ReminderView,
+) -> Result<bool, String> {
+    let moment = now();
+    if let Some(item_id) = reminder.item_id {
+        let Some(item) = db::work_items(conn)?.into_iter().find(|item| item.id == item_id) else {
+            return Ok(false);
+        };
+        return Ok(classify_item(conn, &item, moment)?.is_some());
+    }
+    if reminder.class == InterruptClass::Stall {
+        let Some(sub_id) = reminder.subproject_id else {
+            return Ok(false);
+        };
+        for (id, _name, touched, snooze) in db::active_subprojects_for_scan(conn)? {
+            if id != sub_id {
+                continue;
+            }
+            if snooze
+                .as_deref()
+                .and_then(parse_stored)
+                .map(|until| until > moment)
+                .unwrap_or(false)
+            {
+                return Ok(false);
+            }
+            return Ok(parse_stored(&touched)
+                .map(|touched_at| touched_at <= moment - Duration::days(3))
+                .unwrap_or(false));
+        }
+        return Ok(false);
+    }
+    Ok(false)
 }
 
 fn push_candidate(
