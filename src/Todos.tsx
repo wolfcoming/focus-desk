@@ -173,7 +173,7 @@ export function Todos({
   const [thinking, setThinking] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [showCompose, setShowCompose] = useState(false);
-  const [doneOpen, setDoneOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(true);
   const [swipeId, setSwipeId] = useState<number | null>(null);
   const [swipeX, setSwipeX] = useState(0);
   const swipeTouch = useRef<{ id: number; startX: number; startY: number; axis: "h" | "v" | null } | null>(null);
@@ -182,12 +182,12 @@ export function Todos({
 
   async function load() {
     try {
-      const [board, nextProjects, nextSubs] = await Promise.all([
-        api.today(),
+      const [nextTodos, nextProjects, nextSubs] = await Promise.all([
+        api.listItems("todo"),
         api.listProjects(),
         api.listSubprojects(null),
       ]);
-      setTodos(board.todos);
+      setTodos(nextTodos.filter((item) => item.status === "open" || item.status === "done"));
       setProjects(nextProjects.filter((project) => project.status !== "archived"));
       setSubs(nextSubs);
       setError("");

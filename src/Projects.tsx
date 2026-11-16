@@ -42,6 +42,26 @@ function subModules(sub: Subproject): SubprojectModuleId[] {
   return out;
 }
 
+type TodoDetailForm = {
+  title: string;
+  notes: string;
+  projectId: string;
+  subId: string;
+  dueAt: string | null;
+  remindAt: string | null;
+};
+
+function detailFromTodo(item: Item): TodoDetailForm {
+  return {
+    title: item.title,
+    notes: item.notes,
+    projectId: item.projectId != null ? String(item.projectId) : "",
+    subId: item.subprojectId != null ? String(item.subprojectId) : "",
+    dueAt: item.dueAt,
+    remindAt: item.followUpAt,
+  };
+}
+
 function ideaBoardPercent(board: HTMLElement, clientX: number, clientY: number) {
   const rect = board.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return { x: 20, y: 20 };
@@ -281,6 +301,9 @@ export function Projects({
   const [deleteSub, setDeleteSub] = useState<Subproject | null>(null);
   const [subForm, setSubForm] = useState(emptySubForm);
   const [doneOpen, setDoneOpen] = useState(false);
+  const [todoDoneOpen, setTodoDoneOpen] = useState(true);
+  const [openTodoId, setOpenTodoId] = useState<number | null>(null);
+  const [todoDetail, setTodoDetail] = useState<TodoDetailForm | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [keyProgressOpen, setKeyProgressOpen] = useState(false);
   const [subTodoTitle, setSubTodoTitle] = useState("");
@@ -325,12 +348,26 @@ export function Projects({
     setProjects(nextProjects);
     setSubs(nextSubs);
     setLogs(nextLogs);
-    setTodos(nextTodos.filter((item) => item.status === "open"));
+    setTodos(nextTodos.filter((item) => item.status === "open" || item.status === "done"));
   }
 
   useEffect(() => {
     void load().catch((reason) => setError(message(reason)));
   }, [revision, selectedId]);
+
+  useEffect(() => {
+    if (openTodoId == null) {
+      setTodoDetail(null);
+      return;
+    }
+    const currentTodo = todos.find((item) => item.id === openTodoId);
+    if (!currentTodo) {
+      setOpenTodoId(null);
+      setTodoDetail(null);
+      return;
+    }
+    setTodoDetail(detailFromTodo(currentTodo));
+  }, [todos, openTodoId]);
 
   // 切项目 / 点侧栏回到项目总览时关掉子任务；不要在 focusSubId 被消费清空时误关详情
   useEffect(() => {
@@ -338,6 +375,11 @@ export function Projects({
     if (focusSubId != null) return;
     setInternalOpenSubId(null);
   }, [selectedId, projectTick, controlledSub, focusSubId]);
+
+  useEffect(() => {
+    setOpenTodoId(null);
+    setTodoDetail(null);
+  }, [selectedId, projectTick]);
 
   useEffect(() => {
     if (focusSubId == null) return;
@@ -400,6 +442,8 @@ export function Projects({
 
   function openSub(sub: Subproject) {
     setError("");
+    setOpenTodoId(null);
+    setTodoDetail(null);
     setLogsOpen(false);
     setPlacingIdea(null);
     setDraggingIdeaId(null);
@@ -834,6 +878,12 @@ export function Projects({
   const subTodos = opened
     ? todos.filter((item) => item.subprojectId === opened.id)
     : [];
+  const openedTodo = openTodoId != null ? todos.find((item) => item.id === openTodoId) ?? null : null;
+  const todoDetailSubs = (() => {
+    const id = Number(todoDetail?.projectId);
+    if (!id) return [] as Subproject[];
+    return subs.filter((sub) => sub.projectId === id && (progressOf(sub) !== "done" || String(sub.id) === todoDetail?.subId));
+  })();
   const activeMine = mine.filter((sub) => progressOf(sub) !== "done");
   const doneMine = mine.filter((sub) => progressOf(sub) === "done");
   const regularMine = mine.filter((sub) => sub.kind !== "periodic");
@@ -901,7 +951,93 @@ export function Projects({
     );
   }
 
+  function openTodoItem(item: Item) {
+    setError("");
+    setOpenTodoId(item.id);
+    setTodoDetail(detailFromTodo(item));
+  }
+
+  function closeTodoItem() {
+    setOpenTodoId(null);
+    setTodoDetail(null);
+    setError("");
+  }
+
+  async function saveTodoDetail() {
+    if (openTodoId == null || !todoDetail) return;
+    const nextTitle = todoDetail.title.trim();
+    if (!nextTitle || busy) return;
+    setBusy(true);
+    try {
+      await api.saveItem({
+        id: openTodoId,
+        kind: "todo",
+        title: nextTitle,
+        notes: todoDetail.notes.trim(),
+        projectId: todoDetail.projectId ? Number(todoDetail.projectId) : null,
+        subprojectId: todoDetail.subId ? Number(todoDetail.subId) : null,
+        important: null,
+        urgent: null,
+        dueAt: todoDetail.dueAt,
+        estimateMin: null,
+        repeatDays: null,
+        windowStart: null,
+        windowEnd: null,
+        graceMin: null,
+        interruptAfterGrace: false,
+        waitingOn: null,
+        followUpAt: todoDetail.remindAt,
+      });
+      await load();
+      window.dispatchEvent(new Event("desk-changed"));
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderTodoRows(items: Item[]) {
+    return (
+      <div className="list">
+        {items.map((item) => {
+          const done = item.status === "done";
+          return (
+            <article className={done ? "row todo-row done" : "row todo-row"} key={item.id}>
+              <div className="todo-check">
+                <input
+                  type="checkbox"
+                  checked={done}
+                  disabled={busy}
+                  aria-label={`完成 ${item.title}`}
+                  onChange={(event) => void run(() => api.setTodoDone(item.id, event.target.checked))}
+                />
+                <div className="todo-body">
+                  <button type="button" className="todo-title todo-title-open" onClick={() => openTodoItem(item)}>
+                    {item.title}
+                  </button>
+                  {(item.dueAt || item.followUpAt) && (
+                    <span className="meta todo-meta">
+                      {item.dueAt && <span>截止 {when(item.dueAt)}</span>}
+                      {item.followUpAt && <span>提醒 {when(item.followUpAt)}</span>}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="actions">
+                <button type="button" className="quiet todo-link-btn" disabled={busy} onClick={() => void run(() => api.dropItem(item.id))}>丢掉</button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderTodoList(items: Item[], emptyText: string) {
+    const openItems = items.filter((item) => item.status !== "done");
+    const doneItems = items.filter((item) => item.status === "done");
     if (items.length === 0) {
       return (
         <p className="empty todo-empty">
@@ -911,27 +1047,140 @@ export function Projects({
       );
     }
     return (
-      <div className="list">
-        {items.map((item) => {
-          const done = item.status === "done";
-          return (
-            <article className={done ? "row todo-row done" : "row todo-row"} key={item.id}>
-              <label className="todo-check">
-                <input
-                  type="checkbox"
-                  checked={done}
-                  disabled={busy}
-                  onChange={(event) => void run(() => api.setTodoDone(item.id, event.target.checked))}
-                />
-                <span className="todo-title">{item.title}</span>
-              </label>
-              <div className="actions">
-                <button type="button" className="quiet todo-link-btn" disabled={busy} onClick={() => void run(() => api.dropItem(item.id))}>丢掉</button>
+      <>
+        {openItems.length > 0 ? renderTodoRows(openItems) : (
+          <p className="empty todo-empty">
+            <span className="todo-empty-mark" aria-hidden="true" />
+            <span>没有未完成的待办。</span>
+          </p>
+        )}
+        {doneItems.length > 0 && (
+          <div className="sub-group">
+            <button
+              type="button"
+              className="sub-group-toggle"
+              aria-expanded={todoDoneOpen}
+              onClick={() => setTodoDoneOpen((open) => !open)}
+            >
+              <Chevron open={todoDoneOpen} />
+              <span>已完成 · {doneItems.length}</span>
+            </button>
+            {todoDoneOpen && renderTodoRows(doneItems)}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  if (openedTodo && todoDetail) {
+    const openedDone = openedTodo.status === "done";
+    const editableProjects = projects.filter((project) => project.status !== "archived");
+    return (
+      <section>
+        <div className="project-page">
+          {chromeBack && (
+            <button type="button" className="back" onClick={closeTodoItem}>
+              {opened ? `返回 ${opened.name}` : current ? `返回 ${current.name}` : "返回"}
+            </button>
+          )}
+          <header className="project-header">
+            <div className="project-header-top">
+              <div className="project-heading">
+                <h1>{openedTodo.title}</h1>
+                <span className="status-chip">{openedDone ? "已完成" : "待办"}</span>
               </div>
-            </article>
-          );
-        })}
-      </div>
+              <div className="actions project-header-actions">
+                <button
+                  type="button"
+                  className="quiet"
+                  disabled={busy}
+                  onClick={() => void run(() => api.setTodoDone(openedTodo.id, !openedDone))}
+                >
+                  {openedDone ? "重新打开" : "标记完成"}
+                </button>
+                <button
+                  type="button"
+                  className="quiet tree-delete"
+                  disabled={busy}
+                  onClick={() => void run(async () => {
+                    await api.dropItem(openedTodo.id);
+                    closeTodoItem();
+                  })}
+                >
+                  丢掉
+                </button>
+              </div>
+            </div>
+            <ErrorText text={error} />
+          </header>
+
+          <section className="project-section">
+            <div className="section-head"><h2>配置</h2></div>
+            <form
+              className="stack detail-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveTodoDetail();
+              }}
+            >
+              <Field label="标题">
+                <input
+                  value={todoDetail.title}
+                  onChange={(event) => setTodoDetail({ ...todoDetail, title: event.target.value })}
+                />
+              </Field>
+              <Field label="备注，可空">
+                <textarea
+                  rows={3}
+                  value={todoDetail.notes}
+                  placeholder="补充说明"
+                  onChange={(event) => setTodoDetail({ ...todoDetail, notes: event.target.value })}
+                />
+              </Field>
+              <DateTimeField
+                label="截止时间，可空"
+                value={todoDetail.dueAt ?? ""}
+                emptyText="未设置，点这里选择"
+                onChange={(value) => setTodoDetail({ ...todoDetail, dueAt: value || null })}
+              />
+              <DateTimeField
+                label="提醒时间，可空"
+                value={todoDetail.remindAt ?? ""}
+                emptyText="未设置，点这里选择"
+                onChange={(value) => setTodoDetail({ ...todoDetail, remindAt: value || null })}
+              />
+              <Field label="挂靠项目">
+                <select
+                  value={todoDetail.projectId}
+                  onChange={(event) => setTodoDetail({ ...todoDetail, projectId: event.target.value, subId: "" })}
+                >
+                  <option value="">不挂项目</option>
+                  {editableProjects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="挂靠子任务，可空">
+                <select
+                  value={todoDetail.subId}
+                  disabled={!todoDetail.projectId}
+                  onChange={(event) => setTodoDetail({ ...todoDetail, subId: event.target.value })}
+                >
+                  <option value="">{todoDetail.projectId ? "整个项目" : "先选项目"}</option>
+                  {todoDetailSubs.map((sub) => (
+                    <option key={sub.id} value={sub.id}>{sub.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <div className="actions" style={{ justifyContent: "flex-start" }}>
+                <button className="primary" type="submit" disabled={busy || !todoDetail.title.trim()}>
+                  {busy ? "正在保存…" : "保存"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
     );
   }
 
